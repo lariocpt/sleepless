@@ -1,0 +1,152 @@
+//! Application state machine, kept free of terminal/tray concerns.
+
+use crate::inhibit::{self, Buses, InhibitGuard};
+use crate::power::PowerStatus;
+use std::time::{Duration, Instant};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Mode {
+    Always,
+    PluggedOnly,
+}
+
+impl Mode {
+    pub fn label(self) -> &'static str {
+        match self {
+            Mode::Always => "always",
+            Mode::PluggedOnly => "plugged-only",
+        }
+    }
+}
+
+/// The one rule: inhibit in Always mode, or in PluggedOnly mode while on AC.
+pub fn desired_active(mode: Mode, power: &PowerStatus) -> bool {
+    match mode {
+        Mode::Always => true,
+        Mode::PluggedOnly => power.on_ac,
+    }
+}
+
+const RETRY_EVERY: Duration = Duration::from_secs(5);
+
+pub struct App {
+    pub mode: Mode,
+    pub lid: bool,
+    pub pulse: bool,
+    pub why: String,
+    pub power: PowerStatus,
+    pub guard: Option<InhibitGuard>,
+    pub inhibit_err: Option<String>,
+    pub tray_note: Option<String>,
+    pub tick: u64,
+    pub should_quit: bool,
+    last_attempt: Option<Instant>,
+}
+
+impl App {
+    pub fn new(mode: Mode, lid: bool, pulse: bool, why: String) -> Self {
+        Self {
+            mode,
+            lid,
+            pulse,
+            why,
+            power: PowerStatus::default(),
+            guard: None,
+            inhibit_err: None,
+            tray_note: None,
+            tick: 0,
+            should_quit: false,
+            last_attempt: None,
+        }
+    }
+
+    pub fn active(&self) -> bool {
+        self.guard.is_some()
+    }
+
+    pub fn toggle_mode(&mut self) {
+        self.mode = match self.mode {
+            Mode::Always => Mode::PluggedOnly,
+            Mode::PluggedOnly => Mode::Always,
+        };
+    }
+
+    pub fn set_mode(&mut self, mode: Mode) {
+        self.mode = mode;
+    }
+
+    pub fn toggle_lid(&mut self) {
+        self.lid = !self.lid;
+    }
+
+    pub fn set_lid(&mut self, lid: bool) {
+        self.lid = lid;
+    }
+
+    /// Make reality match `desired_active`. Call on every edge:
+    /// key press, tray command, power-source change.
+    pub fn reconcile(&mut self, buses: &Buses) {
+        let want = desired_active(self.mode, &self.power);
+        let lid_mismatch = self
+            .guard
+            .as_ref()
+            .is_some_and(|g| g.status().lid_requested != self.lid);
+        if self.guard.is_some() && (!want || lid_mismatch) {
+            self.guard = None; // Drop releases instantly
+        }
+        if !want {
+            self.inhibit_err = None;
+            self.last_attempt = None;
+            return;
+        }
+        if self.guard.is_none() {
+            match inhibit::acquire(buses, self.lid, &self.why) {
+                Ok(g) => {
+                    self.guard = Some(g);
+                    self.inhibit_err = None;
+                }
+                Err(e) => self.inhibit_err = Some(e.to_string()),
+            }
+            self.last_attempt = Some(Instant::now());
+        }
+    }
+
+    /// Self-heal after transient D-Bus failures without hammering the bus.
+    pub fn retry_if_due(&mut self, buses: &Buses) {
+        if self.guard.is_none()
+            && desired_active(self.mode, &self.power)
+            && self.last_attempt.is_none_or(|t| t.elapsed() >= RETRY_EVERY)
+        {
+            self.reconcile(buses);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn power(on_ac: bool) -> PowerStatus {
+        PowerStatus {
+            on_ac,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn decision_table() {
+        assert!(desired_active(Mode::Always, &power(true)));
+        assert!(desired_active(Mode::Always, &power(false)));
+        assert!(desired_active(Mode::PluggedOnly, &power(true)));
+        assert!(!desired_active(Mode::PluggedOnly, &power(false)));
+    }
+
+    #[test]
+    fn mode_toggles_round_trip() {
+        let mut app = App::new(Mode::Always, false, true, String::new());
+        app.toggle_mode();
+        assert_eq!(app.mode, Mode::PluggedOnly);
+        app.toggle_mode();
+        assert_eq!(app.mode, Mode::Always);
+    }
+}
