@@ -1,5 +1,6 @@
 //! Application state machine, kept free of terminal/tray concerns.
 
+use crate::art::Splash;
 use crate::inhibit::{self, Buses, InhibitGuard};
 use crate::power::PowerStatus;
 use std::time::{Duration, Instant};
@@ -38,6 +39,9 @@ pub struct App {
     pub guard: Option<InhibitGuard>,
     pub inhibit_err: Option<String>,
     pub tray_note: Option<String>,
+    pub splashes: Vec<Splash>,
+    pub splash_idx: usize,
+    pub config_notes: Vec<String>,
     pub tick: u64,
     pub should_quit: bool,
     last_attempt: Option<Instant>,
@@ -54,6 +58,9 @@ impl App {
             guard: None,
             inhibit_err: None,
             tray_note: None,
+            splashes: Vec::new(),
+            splash_idx: 0,
+            config_notes: Vec::new(),
             tick: 0,
             should_quit: false,
             last_attempt: None,
@@ -81,6 +88,22 @@ impl App {
 
     pub fn set_lid(&mut self, lid: bool) {
         self.lid = lid;
+    }
+
+    pub fn splash(&self) -> Option<&Splash> {
+        self.splashes.get(self.splash_idx)
+    }
+
+    pub fn next_splash(&mut self) {
+        if !self.splashes.is_empty() {
+            self.splash_idx = (self.splash_idx + 1) % self.splashes.len();
+        }
+    }
+
+    pub fn prev_splash(&mut self) {
+        if !self.splashes.is_empty() {
+            self.splash_idx = (self.splash_idx + self.splashes.len() - 1) % self.splashes.len();
+        }
     }
 
     /// Make reality match `desired_active`. Call on every edge:
@@ -148,5 +171,24 @@ mod tests {
         assert_eq!(app.mode, Mode::PluggedOnly);
         app.toggle_mode();
         assert_eq!(app.mode, Mode::Always);
+    }
+
+    #[test]
+    fn splash_cycling_wraps_both_ways() {
+        let mut app = App::new(Mode::Always, false, true, String::new());
+        app.splashes = crate::config::builtin_splashes();
+        let n = app.splashes.len();
+        assert!(n >= 3);
+        for _ in 0..n {
+            app.next_splash();
+        }
+        assert_eq!(app.splash_idx, 0, "forward cycle should wrap");
+        app.prev_splash();
+        assert_eq!(app.splash_idx, n - 1, "backward cycle should wrap");
+        // Empty list must not panic or divide by zero.
+        app.splashes.clear();
+        app.next_splash();
+        app.prev_splash();
+        assert!(app.splash().is_none());
     }
 }

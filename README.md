@@ -49,16 +49,59 @@ nosleep --plugged-only     # start in plugged-only mode
 nosleep --inhibit-lid      # additionally block lid-close suspend
 nosleep --no-tray          # no tray icon
 nosleep --no-pulse         # no pulse animations
+nosleep --splash coffee    # start on a specific splash screen
 nosleep --why "compiling all of chromium"   # reason shown in systemd-inhibit --list
 ```
 
-Keys: **m** toggle mode · **l** toggle lid-close block · **q** / Esc / Ctrl-C quit.
+Keys: **m** toggle mode · **l** toggle lid-close block · **←/→** cycle splash
+screens · **q** / Esc / Ctrl-C quit.
 
 Check what it's holding from another terminal:
 
 ```sh
 systemd-inhibit --list | grep nosleep
 ```
+
+## Configuration
+
+Optional, at `~/.config/nosleep/config.toml` (respects `$XDG_CONFIG_HOME`).
+Command-line flags always win over the file; a broken config warns inside the
+TUI and is otherwise ignored — it can never stop the app from working.
+
+```toml
+mode = "plugged-only"     # default mode: "always" or "plugged-only"
+inhibit_lid = false
+tray = true
+pulse = true
+why = "I can't get no sleep"
+splash = "coffee"         # splash to show at startup, by name
+
+# Extra splash screens (cycle with ←/→). Three are built in:
+# "default" (I CAN'T GET NO SLEEP), "brooklyn", "coffee".
+[[splashes]]
+name = "hello"
+text = ["HELLO!", "WORLD"]      # rendered with the block font: A-Z 0-9 '-!?.
+color = "#ff00ff"               # active color: name or #rrggbb
+pulse_color = "lightmagenta"
+paused_color = "darkgray"
+
+[[splashes]]
+name = "cat"
+art = '''
+ /\_/\
+( o.o )
+ > ^ <
+'''                             # verbatim ASCII art…
+
+[[splashes]]
+name = "dragon"
+art_file = "~/.config/nosleep/dragon.txt"   # …or loaded from a file
+color = "lightred"
+```
+
+Each splash takes exactly one of `text`, `art`, or `art_file`. Text splashes
+scale down automatically on narrow terminals; art that doesn't fit falls back
+to a one-line banner.
 
 ## Good to know
 

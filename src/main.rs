@@ -1,5 +1,6 @@
 mod app;
 mod art;
+mod config;
 mod inhibit;
 mod power;
 #[cfg(all(target_os = "linux", feature = "tray"))]
@@ -15,6 +16,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 /// Keep your computer awake while this runs. Close the terminal to stop.
+///
+/// Options not given on the command line fall back to
+/// ~/.config/nosleep/config.toml, then to built-in defaults.
 #[derive(Parser, Debug)]
 #[command(version, about)]
 struct Args {
@@ -34,9 +38,13 @@ struct Args {
     #[arg(long)]
     no_pulse: bool,
 
-    /// Reason shown in `systemd-inhibit --list`
-    #[arg(long, default_value = "I can't get no sleep")]
-    why: String,
+    /// Start on this splash screen (by name); cycle with Left/Right
+    #[arg(long)]
+    splash: Option<String>,
+
+    /// Reason shown in `systemd-inhibit --list` [default: "I can't get no sleep"]
+    #[arg(long)]
+    why: Option<String>,
 
     /// Run headless for N seconds, print status, then exit
     #[arg(long, value_name = "SECS", hide = true)]
@@ -45,13 +53,39 @@ struct Args {
 
 fn main() -> Result<()> {
     let args = Args::parse();
-    let mode = if args.plugged_only {
+    let config::Loaded { file, mut warnings } = config::load();
+
+    let mode = if args.plugged_only || file.mode.as_deref() == Some("plugged-only") {
         Mode::PluggedOnly
     } else {
         Mode::Always
     };
+    let lid = args.inhibit_lid || file.inhibit_lid.unwrap_or(false);
+    let pulse = !args.no_pulse && file.pulse.unwrap_or(true);
+    let tray_enabled = !args.no_tray && file.tray.unwrap_or(true);
+    let why = args
+        .why
+        .clone()
+        .or_else(|| file.why.clone())
+        .unwrap_or_else(|| "I can't get no sleep".into());
+
+    let splashes = config::build_splashes(&file, &mut warnings);
+    let splash_idx = match args.splash.as_deref().or(file.splash.as_deref()) {
+        None => 0,
+        Some(name) => splashes
+            .iter()
+            .position(|s| s.name.eq_ignore_ascii_case(name))
+            .unwrap_or_else(|| {
+                warnings.push(format!("splash {name:?} not found, using the first one"));
+                0
+            }),
+    };
+
     let buses = inhibit::Buses::connect()?;
-    let mut app = App::new(mode, args.inhibit_lid, !args.no_pulse, args.why.clone());
+    let mut app = App::new(mode, lid, pulse, why);
+    app.splashes = splashes;
+    app.splash_idx = splash_idx;
+    app.config_notes = warnings;
     app.power = power::read();
     app.reconcile(&buses);
 
@@ -68,7 +102,7 @@ fn main() -> Result<()> {
         let _ = signal_hook::flag::register(sig, Arc::clone(&term));
     }
 
-    let mut tray = TrayCtl::start(&mut app, !args.no_tray);
+    let mut tray = TrayCtl::start(&mut app, tray_enabled);
     tray.push(&mut app, false);
 
     let mut terminal = ratatui::init();
@@ -109,6 +143,8 @@ fn run_tui(
                     app.reconcile(buses);
                     edge = true;
                 }
+                KeyCode::Left => app.prev_splash(),
+                KeyCode::Right => app.next_splash(),
                 _ => {}
             }
         }
@@ -261,6 +297,9 @@ fn print_state(app: &App) {
         for note in &g.status().notes {
             println!("  note: {note}");
         }
+    }
+    for note in &app.config_notes {
+        println!("  {note}");
     }
     if let Some(e) = &app.inhibit_err {
         println!("  error: {e}");
