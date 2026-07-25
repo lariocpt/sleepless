@@ -7,8 +7,8 @@
 
 use crate::art::{Splash, SplashSource};
 use ratatui::style::Color;
-use serde::Deserialize;
-use std::path::PathBuf;
+use serde::{Deserialize, Serialize};
+use std::path::{Path, PathBuf};
 
 #[derive(Debug, Default, Deserialize)]
 pub struct FileConfig {
@@ -41,6 +41,65 @@ pub struct SplashDef {
 pub struct Loaded {
     pub file: FileConfig,
     pub warnings: Vec<String>,
+}
+
+/// Runtime changes (mode/lid toggles, chosen splash), saved as they happen and
+/// restored on the next launch. Kept in `$XDG_STATE_HOME/nosleep/state.toml`
+/// (usually `~/.local/state/...`), separate from the hand-edited config.toml,
+/// which is never rewritten. Precedence: CLI flags > state > config.toml.
+#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct State {
+    /// "always" or "plugged-only".
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mode: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub inhibit_lid: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub splash: Option<String>,
+}
+
+pub fn state_path() -> PathBuf {
+    let base = std::env::var_os("XDG_STATE_HOME")
+        .map(PathBuf::from)
+        .filter(|p| p.is_absolute())
+        .or_else(|| {
+            std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local").join("state"))
+        })
+        .unwrap_or_else(|| PathBuf::from("."));
+    base.join("nosleep").join("state.toml")
+}
+
+pub fn load_state() -> State {
+    load_state_from(&state_path())
+}
+
+fn load_state_from(path: &Path) -> State {
+    // Like the config: an unreadable or broken state file is never fatal.
+    let mut state: State = std::fs::read_to_string(path)
+        .ok()
+        .and_then(|s| toml::from_str(&s).ok())
+        .unwrap_or_default();
+    if let Some(m) = &state.mode
+        && !matches!(m.as_str(), "always" | "plugged-only")
+    {
+        state.mode = None;
+    }
+    state
+}
+
+pub fn save_state(state: &State) -> std::io::Result<()> {
+    save_state_to(&state_path(), state)
+}
+
+fn save_state_to(path: &Path, state: &State) -> std::io::Result<()> {
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    let body = toml::to_string(state).map_err(std::io::Error::other)?;
+    // Write-then-rename so a crash mid-write can't leave a truncated file.
+    let tmp = path.with_extension("toml.tmp");
+    std::fs::write(&tmp, body)?;
+    std::fs::rename(&tmp, path)
 }
 
 pub fn config_path() -> PathBuf {
@@ -299,6 +358,32 @@ color = "chartreuse-ish"
         assert_eq!(warnings.len(), 2, "{warnings:?}");
         let bad = splashes.iter().find(|s| s.name == "badcolor").unwrap();
         assert_eq!(bad.color, Color::Green);
+    }
+
+    #[test]
+    fn state_round_trips() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("state.toml");
+        let state = State {
+            mode: Some("plugged-only".into()),
+            inhibit_lid: Some(true),
+            splash: Some("coffee".into()),
+        };
+        save_state_to(&path, &state).unwrap();
+        assert_eq!(load_state_from(&path), state);
+        // No leftover temp file from the atomic write.
+        assert!(!path.with_extension("toml.tmp").exists());
+    }
+
+    #[test]
+    fn bad_state_is_ignored() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("state.toml");
+        assert_eq!(load_state_from(&path), State::default(), "missing file");
+        std::fs::write(&path, "not toml [[[").unwrap();
+        assert_eq!(load_state_from(&path), State::default(), "broken file");
+        std::fs::write(&path, "mode = \"sometimes\"").unwrap();
+        assert_eq!(load_state_from(&path).mode, None, "unknown mode dropped");
     }
 
     #[test]

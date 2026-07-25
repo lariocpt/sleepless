@@ -26,6 +26,10 @@ struct Args {
     #[arg(long)]
     plugged_only: bool,
 
+    /// Keep awake regardless of power source, overriding any saved setting
+    #[arg(long, conflicts_with = "plugged_only")]
+    always: bool,
+
     /// Also block lid-close suspend (logind handle-lid-switch)
     #[arg(long)]
     inhibit_lid: bool,
@@ -54,13 +58,18 @@ struct Args {
 fn main() -> Result<()> {
     let args = Args::parse();
     let config::Loaded { file, mut warnings } = config::load();
+    let state = config::load_state();
 
-    let mode = if args.plugged_only || file.mode.as_deref() == Some("plugged-only") {
+    // Runtime toggles: CLI flag > saved state from the last run > config file.
+    let mode = if !args.always
+        && (args.plugged_only
+            || state.mode.as_deref().or(file.mode.as_deref()) == Some("plugged-only"))
+    {
         Mode::PluggedOnly
     } else {
         Mode::Always
     };
-    let lid = args.inhibit_lid || file.inhibit_lid.unwrap_or(false);
+    let lid = args.inhibit_lid || state.inhibit_lid.or(file.inhibit_lid).unwrap_or(false);
     let pulse = !args.no_pulse && file.pulse.unwrap_or(true);
     let tray_enabled = !args.no_tray && file.tray.unwrap_or(true);
     let why = args
@@ -70,7 +79,12 @@ fn main() -> Result<()> {
         .unwrap_or_else(|| "I can't get no sleep".into());
 
     let splashes = config::build_splashes(&file, &mut warnings);
-    let splash_idx = match args.splash.as_deref().or(file.splash.as_deref()) {
+    let splash_arg = args
+        .splash
+        .as_deref()
+        .or(state.splash.as_deref())
+        .or(file.splash.as_deref());
+    let splash_idx = match splash_arg {
         None => 0,
         Some(name) => splashes
             .iter()
@@ -120,6 +134,11 @@ fn run_tui(
 ) -> Result<()> {
     let mut last_power = Instant::now();
     let mut tray_frame = false;
+    // Persist runtime toggles when they change, so the next launch restores
+    // them. Seeded from the current state so nothing is written until the
+    // user actually changes something.
+    let mut saved = snapshot(app);
+    let mut save_failed = false;
     loop {
         terminal.draw(|f| ui::draw(f, app))?;
 
@@ -170,9 +189,31 @@ fn run_tui(
             tray.push(app, frame);
         }
 
+        let snap = snapshot(app);
+        if snap != saved {
+            match config::save_state(&snap) {
+                Ok(()) => saved = snap,
+                Err(e) if !save_failed => {
+                    save_failed = true;
+                    app.config_notes
+                        .push(format!("state: settings won't persist: {e}"));
+                }
+                Err(_) => {}
+            }
+        }
+
         if app.should_quit || term.load(Ordering::Relaxed) {
             return Ok(());
         }
+    }
+}
+
+/// The persistable slice of runtime state.
+fn snapshot(app: &App) -> config::State {
+    config::State {
+        mode: Some(app.mode.label().to_string()),
+        inhibit_lid: Some(app.lid),
+        splash: app.splash().map(|s| s.name.clone()),
     }
 }
 

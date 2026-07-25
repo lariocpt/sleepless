@@ -35,10 +35,23 @@ While active, nosleep holds two process-lifetime-bound locks:
 
 Because both locks die with the process, closing the terminal *is* the off switch.
 
-## Install
+## Building & Running
 
+### Run directly
 ```sh
-cargo install --path .
+cargo run                     # compile and run with default settings
+cargo run -- --plugged-only   # pass flags after --
+```
+
+### Build binaries
+```sh
+cargo build           # debug build in target/debug/nosleep
+cargo build --release # optimized release build in target/release/nosleep
+```
+
+### Install locally
+```sh
+cargo install --path . # compiles and installs to ~/.cargo/bin/nosleep
 ```
 
 ## Usage
@@ -46,6 +59,7 @@ cargo install --path .
 ```sh
 nosleep                    # keep the machine awake while running
 nosleep --plugged-only     # start in plugged-only mode
+nosleep --always           # force always mode, overriding saved settings
 nosleep --inhibit-lid      # additionally block lid-close suspend
 nosleep --no-tray          # no tray icon
 nosleep --no-pulse         # no pulse animations
@@ -103,6 +117,17 @@ Each splash takes exactly one of `text`, `art`, or `art_file`. Text splashes
 scale down automatically on narrow terminals; art that doesn't fit falls back
 to a one-line banner.
 
+### Settings persistence
+
+Runtime changes — the mode toggle (**m** / tray), the lid-block toggle (**l**),
+and the selected splash (**←/→**) — are saved as they happen to
+`~/.local/state/nosleep/state.toml` (respects `$XDG_STATE_HOME`) and restored on
+the next launch. Precedence is: command-line flags > saved state > config.toml.
+So `mode` and friends in config.toml act as first-run defaults; after you toggle
+something at runtime the saved value wins, and a flag like `--always` or
+`--plugged-only` overrides both for that run. Delete the state file to go back
+to your config.toml defaults. A broken or unwritable state file is never fatal.
+
 ## Good to know
 
 - **Lid close still suspends by default.** logind treats the lid as a separate
@@ -120,9 +145,7 @@ to a one-line banner.
 
 ## Development
 
-- `cargo run -- --smoke 5` — headless: acquire locks, print status, hold 5 s, exit.
-  Useful for scripting/tests without a TTY.
-- `cargo test` — power-source parsing (fake sysfs trees), mode decision table, art
-  layout invariants.
-- See `CLAUDE.md` for project rules (README updated every phase; clippy + tests
-  must pass).
+- `cargo run -- --smoke 5` — headless: acquire locks, print status, hold 5 s, exit. Useful for scripting/tests without a TTY.
+- `cargo test` — run unit tests (power-source parsing, mode decision table, art layout invariants).
+- `cargo clippy` — run linter checks.
+- See `CLAUDE.md` for project rules (README updated every phase; clippy + tests must pass).
