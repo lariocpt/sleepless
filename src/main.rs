@@ -233,7 +233,7 @@ impl TrayCtl {
         {
             let (tx, rx) = std::sync::mpsc::channel();
             let handle = if enabled {
-                match tray::spawn(tray::NosleepTray::new(tx)) {
+                match tray::spawn(tray::SleeplessTray::new(tx)) {
                     Ok(h) => Some(h),
                     Err(_) => {
                         app.tray_note = Some("tray: unavailable".into());

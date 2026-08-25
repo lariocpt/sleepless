@@ -14,7 +14,7 @@ pub enum TrayMsg {
     Quit,
 }
 
-pub struct NosleepTray {
+pub struct SleeplessTray {
     pub mode: Mode,
     pub lid: bool,
     pub active: bool,
@@ -24,7 +24,7 @@ pub struct NosleepTray {
     tx: Sender<TrayMsg>,
 }
 
-impl NosleepTray {
+impl SleeplessTray {
     pub fn new(tx: Sender<TrayMsg>) -> Self {
         Self {
             mode: Mode::Always,
@@ -37,7 +37,7 @@ impl NosleepTray {
     }
 }
 
-impl ksni::Tray for NosleepTray {
+impl ksni::Tray for SleeplessTray {
     fn id(&self) -> String {
         "sleepless".into()
     }
@@ -138,9 +138,9 @@ impl ksni::Tray for NosleepTray {
     }
 }
 
-pub type Handle = ksni::blocking::Handle<NosleepTray>;
+pub type Handle = ksni::blocking::Handle<SleeplessTray>;
 
-pub fn spawn(tray: NosleepTray) -> Result<Handle, ksni::Error> {
+pub fn spawn(tray: SleeplessTray) -> Result<Handle, ksni::Error> {
     use ksni::blocking::TrayMethods;
     tray.spawn()
 }
