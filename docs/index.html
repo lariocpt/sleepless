@@ -1,0 +1,718 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>nosleep</title>
+<meta name="description" content="nosleep keeps your computer awake for exactly as long as it runs. Every lock is bound to the process, so closing the terminal restores normal sleep instantly.">
+<meta name="color-scheme" content="light dark">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%2322c55e'/%3E%3Cellipse cx='16' cy='16' rx='11.5' ry='7' fill='%23fff'/%3E%3Ccircle cx='16' cy='16' r='4' fill='%23080808'/%3E%3C/svg%3E">
+<meta property="og:title" content="nosleep">
+<meta property="og:description" content="A terminal keep-awake tool whose locks die with the process.">
+<meta property="og:type" content="website">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;800&family=Public+Sans:ital,wght@0,400;0,600;1,400&family=JetBrains+Mono:wght@400;700&display=swap">
+<style>
+/* minimal reset — the artifact host provides one, a static file does not */
+*,*::before,*::after{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body,h1,h2,h3,p,figure,blockquote,dl,dd{margin:0}
+img,picture,svg{max-width:100%;display:block}
+table{border-collapse:collapse}
+</style>
+</head>
+<body><style>
+:root {
+  /* Light. Neutrals carry a green bias so they read as chosen, not defaulted. */
+  --ground:   #f1f5f1;
+  --panel:    #ffffff;
+  --panel-2:  #e8efe9;
+  --line:     #cfdbd2;
+  --text:     #0a0e0b;
+  --muted:    #5b6b60;
+  --awake:    #15803d;
+  --pulse:    #22c55e;
+  --paused:   #b45309;
+  --dead:     #8d9a92;
+  --shadow:   0 1px 2px rgba(10,14,11,.06), 0 8px 24px rgba(10,14,11,.05);
+
+  --display: "Archivo", ui-sans-serif, system-ui, sans-serif;
+  --body:    "Public Sans", ui-sans-serif, system-ui, sans-serif;
+  --mono:    "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --ground:  #0a0e0b;
+    --panel:   #111a13;
+    --panel-2: #16211a;
+    --line:    #24332a;
+    --text:    #dbe7de;
+    --muted:   #7d9086;
+    --awake:   #22c55e;
+    --pulse:   #4ade80;
+    --paused:  #f59e0b;
+    --dead:    #4a5850;
+    --shadow:  0 1px 2px rgba(0,0,0,.4), 0 10px 30px rgba(0,0,0,.35);
+  }
+}
+:root[data-theme="dark"] {
+  --ground:  #0a0e0b;
+  --panel:   #111a13;
+  --panel-2: #16211a;
+  --line:    #24332a;
+  --text:    #dbe7de;
+  --muted:   #7d9086;
+  --awake:   #22c55e;
+  --pulse:   #4ade80;
+  --paused:  #f59e0b;
+  --dead:    #4a5850;
+  --shadow:  0 1px 2px rgba(0,0,0,.4), 0 10px 30px rgba(0,0,0,.35);
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--ground);
+  color: var(--text);
+  font-family: var(--body);
+  font-size: 17px;
+  line-height: 1.65;
+  -webkit-font-smoothing: antialiased;
+}
+
+.wrap { max-width: 1040px; margin: 0 auto; padding: 0 24px; }
+.prose { max-width: 68ch; }
+
+h1, h2, h3 { font-family: var(--display); text-wrap: balance; margin: 0; }
+h2 { font-size: clamp(1.5rem, 3.4vw, 2.1rem); font-weight: 800; letter-spacing: -.02em; }
+h3 { font-size: 1.06rem; font-weight: 600; letter-spacing: -.01em; }
+p  { margin: 0; }
+a  { color: inherit; }
+
+.eyebrow {
+  font-family: var(--mono);
+  font-size: .72rem;
+  font-weight: 700;
+  letter-spacing: .16em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+section { padding: clamp(56px, 8vw, 104px) 0; border-top: 1px solid var(--line); }
+.stack   { display: flex; flex-direction: column; gap: 20px; }
+.stack-s { display: flex; flex-direction: column; gap: 10px; }
+
+/* ---------- hero ---------- */
+
+.hero { padding: clamp(48px, 9vw, 96px) 0 clamp(48px, 7vw, 80px); border-top: none; }
+
+.splash {
+  font-family: var(--mono);
+  font-weight: 700;
+  white-space: pre;
+  line-height: 1.02;
+  font-size: clamp(4.2px, 1.42vw, 15px);
+  color: var(--awake);
+  margin: 0;
+  overflow-x: auto;
+  transition: color .45s ease;
+}
+.splash[data-state="pulse"]  { color: var(--pulse); }
+.splash[data-state="paused"] { color: var(--dead); }
+
+@media (prefers-reduced-motion: reduce) {
+  .splash { transition: none; }
+}
+
+.chip {
+  display: inline-flex; align-items: center; gap: 8px;
+  font-family: var(--mono); font-size: .74rem; font-weight: 700;
+  letter-spacing: .1em; text-transform: uppercase;
+  padding: 5px 12px; border-radius: 2px;
+  background: var(--awake); color: var(--ground);
+  transition: background .45s ease;
+}
+.chip[data-state="paused"] { background: var(--dead); }
+.chip[data-state="dead"]   { background: var(--paused); }
+
+.lede {
+  font-size: clamp(1.15rem, 2.2vw, 1.42rem);
+  line-height: 1.5;
+  max-width: 34ch;
+  font-family: var(--display);
+  font-weight: 500;
+  letter-spacing: -.015em;
+}
+.sub { color: var(--muted); max-width: 60ch; }
+
+/* ---------- code ---------- */
+
+.cmd {
+  font-family: var(--mono); font-size: .88rem;
+  background: var(--panel); border: 1px solid var(--line);
+  padding: 13px 16px; border-radius: 3px;
+  display: flex; align-items: center; gap: 12px;
+  overflow-x: auto; white-space: pre;
+}
+.cmd .sigil { color: var(--muted); user-select: none; }
+
+pre.block {
+  font-family: var(--mono); font-size: .82rem; line-height: 1.7;
+  background: var(--panel); border: 1px solid var(--line);
+  padding: 16px 18px; border-radius: 3px; margin: 0;
+  overflow-x: auto;
+}
+code { font-family: var(--mono); font-size: .9em; }
+.prose code, li code, td code {
+  background: var(--panel-2); padding: 1px 5px; border-radius: 2px;
+}
+kbd {
+  font-family: var(--mono); font-size: .82em;
+  background: var(--panel-2); border: 1px solid var(--line);
+  border-radius: 3px; padding: 1px 6px; color: var(--text);
+}
+
+/* ---------- the kill demo ---------- */
+
+.demo {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 1px;
+  background: var(--line); border: 1px solid var(--line); border-radius: 4px;
+  overflow: hidden;
+}
+@media (max-width: 720px) { .demo { grid-template-columns: 1fr; } }
+
+.pane { background: var(--panel); padding: 22px; display: flex; flex-direction: column; gap: 16px; }
+.pane-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+
+.rows { display: flex; flex-direction: column; gap: 1px; background: var(--line); }
+.row {
+  background: var(--panel-2);
+  display: grid; grid-template-columns: 1fr auto; gap: 12px;
+  padding: 11px 13px; align-items: center;
+  font-family: var(--mono); font-size: .78rem;
+}
+.row .what { color: var(--text); }
+.row .note { display: block; color: var(--muted); font-size: .92em; margin-top: 3px; }
+.state {
+  font-weight: 700; letter-spacing: .06em; text-transform: uppercase;
+  font-size: .68rem; white-space: nowrap;
+}
+.state.on   { color: var(--awake); }
+.state.off  { color: var(--dead); }
+.state.warn { color: var(--paused); }
+
+.verdict {
+  font-family: var(--mono); font-size: .78rem; line-height: 1.55;
+  padding: 12px 14px; border-radius: 3px;
+  border-left: 3px solid var(--awake); background: var(--panel-2);
+}
+.verdict[data-tone="bad"]  { border-left-color: var(--paused); }
+.verdict[data-tone="dead"] { border-left-color: var(--dead); color: var(--muted); }
+
+.controls { display: flex; gap: 10px; flex-wrap: wrap; }
+button {
+  font-family: var(--mono); font-size: .76rem; font-weight: 700;
+  letter-spacing: .06em; text-transform: uppercase;
+  padding: 10px 16px; border-radius: 3px; cursor: pointer;
+  background: var(--panel-2); color: var(--text);
+  border: 1px solid var(--line);
+  transition: border-color .15s ease, color .15s ease;
+}
+button:hover:not(:disabled) { border-color: var(--awake); color: var(--awake); }
+button.danger:hover:not(:disabled) { border-color: var(--paused); color: var(--paused); }
+button:disabled { opacity: .4; cursor: not-allowed; }
+button:focus-visible { outline: 2px solid var(--pulse); outline-offset: 2px; }
+
+/* ---------- feature + table ---------- */
+
+.grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(268px, 1fr)); gap: 28px 36px; }
+
+.feat { display: flex; flex-direction: column; gap: 7px; }
+.feat h3 { color: var(--text); }
+.feat p  { color: var(--muted); font-size: .95rem; }
+.feat .k {
+  font-family: var(--mono); font-size: .68rem; font-weight: 700;
+  letter-spacing: .12em; text-transform: uppercase; color: var(--awake);
+}
+
+.tablewrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 4px; }
+table { border-collapse: collapse; width: 100%; min-width: 620px; font-size: .9rem; }
+th, td { text-align: left; padding: 13px 16px; border-bottom: 1px solid var(--line); vertical-align: top; }
+thead th {
+  font-family: var(--mono); font-size: .68rem; font-weight: 700;
+  letter-spacing: .12em; text-transform: uppercase; color: var(--muted);
+  background: var(--panel-2);
+}
+tbody tr:last-child td { border-bottom: none; }
+tbody th { font-family: var(--display); font-weight: 600; white-space: nowrap; }
+td .y { color: var(--awake); font-weight: 600; }
+td .n { color: var(--dead); }
+td small { display: block; color: var(--muted); font-size: .86em; line-height: 1.45; }
+
+.footnote { color: var(--muted); font-size: .88rem; }
+
+footer { border-top: 1px solid var(--line); padding: 40px 0 64px; color: var(--muted); font-size: .88rem; }
+footer a { text-decoration-color: var(--line); text-underline-offset: 3px; }
+footer a:hover { color: var(--awake); }
+</style>
+
+<div class="wrap">
+
+  <!-- ============ HERO ============ -->
+  <header class="hero stack">
+    <pre class="splash" id="splash" aria-label="I can't get no sleep" data-state="on"></pre>
+
+    <div class="stack" style="gap:14px; margin-top:8px;">
+      <span class="chip" id="chip" data-state="on">&#9679;&nbsp; Awake &mdash; always</span>
+      <p class="lede">Keeps your computer awake for exactly as long as the terminal is open.</p>
+      <p class="sub">
+        Every lock it takes is bound to the process itself. Close the terminal &mdash; or
+        <code>kill -9</code> it, however rudely &mdash; and normal sleep is back instantly.
+        There is no daemon, no config to undo, and nothing left behind to clean up.
+      </p>
+      <div class="cmd" style="max-width:min(100%,460px); margin-top:4px;">
+        <span class="sigil">$</span>cargo install nosleep-tui
+      </div>
+    </div>
+  </header>
+
+  <!-- ============ PROBLEM ============ -->
+  <section class="stack">
+    <span class="eyebrow">The problem</span>
+    <h2>Every keep&#8209;awake tool has an off switch you can forget.</h2>
+    <div class="prose stack" style="gap:16px;">
+      <p>
+        You start a long build, or a download, or a presentation, and you need the machine to
+        stay up. So you reach for something that disables sleep. Then the build finishes and
+        you close the lid, and three hours later the laptop is hot, flat, and still awake.
+      </p>
+      <p>
+        That happens because most of these tools change a <em>setting</em>. A GUI toggle writes
+        to a power profile. A helper script disables a timer. A background daemon holds a lock
+        on your behalf and outlives the thing you actually cared about. All of it survives the
+        program that set it &mdash; and all of it survives that program crashing.
+      </p>
+      <p>
+        <strong>nosleep has no off switch to forget, because the process <em>is</em> the
+        switch.</strong> While it runs, you are awake. The moment it stops, for any reason,
+        you are not.
+      </p>
+    </div>
+  </section>
+
+  <!-- ============ MECHANISM ============ -->
+  <section class="stack">
+    <span class="eyebrow">How it works</span>
+    <h2>The kernel is what releases the lock, not the program.</h2>
+    <p class="prose sub">
+      On Linux, nosleep holds two independent locks, and neither one requires it to shut down
+      politely. Try killing it &mdash; the hard way, with no chance to run cleanup code &mdash;
+      and watch what each side does.
+    </p>
+
+    <div class="demo" style="margin-top:8px;">
+      <div class="pane">
+        <div class="pane-head">
+          <h3>nosleep</h3>
+          <span class="state on" id="ns-pid">pid 4127 &middot; running</span>
+        </div>
+        <div class="rows" id="ns-rows"></div>
+        <div class="verdict" id="ns-verdict" data-tone="good"></div>
+      </div>
+
+      <div class="pane">
+        <div class="pane-head">
+          <h3>A daemon&#8209;backed tool</h3>
+          <span class="state on" id="d-pid">pid 4128 &middot; running</span>
+        </div>
+        <div class="rows" id="d-rows"></div>
+        <div class="verdict" id="d-verdict" data-tone="good"></div>
+      </div>
+    </div>
+
+    <div class="controls" style="margin-top:4px;">
+      <button class="danger" id="btn-kill">kill -9 both</button>
+      <button id="btn-reset" disabled>restart</button>
+    </div>
+
+    <div class="grid2" style="margin-top:26px;">
+      <div class="feat">
+        <span class="k">Session bus</span>
+        <h3>org.freedesktop.ScreenSaver</h3>
+        <p>
+          Returns a cookie that is scoped to the D&#8209;Bus <em>connection</em>. When the process
+          dies the connection drops, the bus broadcasts it, and the compositor releases the
+          inhibit on its own. Understood by GNOME, KDE, niri and most others.
+        </p>
+      </div>
+      <div class="feat">
+        <span class="k">System bus</span>
+        <h3>logind sleep:idle</h3>
+        <p>
+          logind hands back an open pipe file descriptor and holds the lock for exactly as long
+          as that fd stays open. Closing it is not something nosleep has to remember to do &mdash;
+          the kernel closes every fd a process owns when it dies, <code>SIGKILL</code> included.
+        </p>
+      </div>
+    </div>
+
+    <p class="footnote prose" style="margin-top:6px;">
+      That is the whole design, and it is why there is no <code>--stop</code> flag, no PID file
+      and no state directory to get out of sync. Verify it yourself while it runs:
+      <code>systemd-inhibit --list | grep nosleep</code>.
+    </p>
+  </section>
+
+  <!-- ============ FEATURES ============ -->
+  <section class="stack">
+    <span class="eyebrow">What you get</span>
+    <h2>A full&#8209;screen status display, not a menu&#8209;bar checkbox.</h2>
+    <div class="grid2" style="margin-top:10px;">
+
+      <div class="feat">
+        <span class="k">At a glance</span>
+        <h3>State is the colour</h3>
+        <p>
+          Green and gently pulsing means the locks are held. Grey with a yellow banner means it
+          paused on purpose. Red means it wanted the locks and could not get them &mdash; which
+          you find out immediately, rather than when your machine sleeps mid&#8209;build.
+        </p>
+      </div>
+
+      <div class="feat">
+        <span class="k">Battery aware</span>
+        <h3>Only while plugged in</h3>
+        <p>
+          <code>--plugged-only</code> releases every lock the moment you unplug and takes them
+          back when AC returns, checked every two seconds. Toggle it live with <kbd>m</kbd>
+          without restarting.
+        </p>
+      </div>
+
+      <div class="feat">
+        <span class="k">Linux</span>
+        <h3>A tray eye</h3>
+        <p>
+          A StatusNotifierItem that shows an open green eye while awake and a closed amber one
+          while paused. Left&#8209;click toggles the mode. If your bar restarts, it re&#8209;registers
+          itself; if you have no tray at all, it just says so and carries on.
+        </p>
+      </div>
+
+      <div class="feat">
+        <span class="k">Yours</span>
+        <h3>Custom splash screens</h3>
+        <p>
+          Three are built in. Add your own in <code>config.toml</code> as block&#8209;font text,
+          inline ASCII art, or a path to an art file, each with its own colours, and cycle them
+          with the arrow keys.
+        </p>
+      </div>
+
+      <div class="feat">
+        <span class="k">Opt in</span>
+        <h3>Lid&#8209;close blocking</h3>
+        <p>
+          logind treats the lid as a separate channel that ignores ordinary sleep inhibitors, so
+          blocking it is deliberate rather than a surprise. If polkit refuses, nosleep keeps the
+          other locks and marks lid as refused instead of failing.
+        </p>
+      </div>
+
+      <div class="feat">
+        <span class="k">Scriptable</span>
+        <h3>Headless mode</h3>
+        <p>
+          <code>--smoke N</code> takes the locks, prints plain&#8209;ASCII status, holds for N
+          seconds and exits &mdash; no TTY required. It is how the test suite checks that the
+          locks are real on every platform.
+        </p>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- ============ PLATFORMS ============ -->
+  <section class="stack">
+    <span class="eyebrow">Platform support</span>
+    <h2>Linux is the developed path. The rest is honest about itself.</h2>
+    <p class="prose sub">
+      The core guarantee holds everywhere: on all three platforms the underlying API is
+      process&#8209;scoped, so nothing outlives the program. What differs is how much is
+      exposed and how hard it has been exercised.
+    </p>
+
+    <div class="tablewrap" style="margin-top:8px;">
+      <table>
+        <thead>
+          <tr>
+            <th scope="col">&nbsp;</th>
+            <th scope="col">Linux</th>
+            <th scope="col">macOS</th>
+            <th scope="col">Windows</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <th scope="row">Mechanism</th>
+            <td><span class="y">D&#8209;Bus</span><small>ScreenSaver cookie + logind pipe fd</small></td>
+            <td><span class="y">IOKit</span><small>IOPMAssertionCreateWithName</small></td>
+            <td><span class="y">Win32</span><small>SetThreadExecutionState</small></td>
+          </tr>
+          <tr>
+            <th scope="row">Dies with the process</th>
+            <td><span class="y">Yes</span><small>kernel closes the fd</small></td>
+            <td><span class="y">Yes</span><small>powerd reaps the assertion</small></td>
+            <td><span class="y">Yes</span><small>state is per&#8209;thread</small></td>
+          </tr>
+          <tr>
+            <th scope="row">Keeps the display on</th>
+            <td><span class="y">Yes</span></td>
+            <td><span class="y">Yes</span></td>
+            <td><span class="y">Yes</span></td>
+          </tr>
+          <tr>
+            <th scope="row">Tray icon</th>
+            <td><span class="y">Yes</span><small>StatusNotifierItem</small></td>
+            <td><span class="n">No</span><small>needs a main&#8209;thread run loop the TUI owns</small></td>
+            <td><span class="n">No</span><small>same</small></td>
+          </tr>
+          <tr>
+            <th scope="row">Lid&#8209;close blocking</th>
+            <td><span class="y">Opt&#8209;in</span><small>logind handle&#8209;lid&#8209;switch</small></td>
+            <td><span class="n">No</span><small>clamshell sleep is not assertion&#8209;controlled</small></td>
+            <td><span class="n">No</span><small>user&#8209;initiated sleep always wins</small></td>
+          </tr>
+          <tr>
+            <th scope="row">Tested by</th>
+            <td><span class="y">Daily use</span><small>plus CI on x86&#8209;64 and arm64</small></td>
+            <td><span class="y">CI</span><small>assertion verified with pmset</small></td>
+            <td><span class="y">CI</span><small>request verified with powercfg</small></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p class="footnote prose" style="margin-top:14px;">
+      Two limits worth knowing before you rely on them. On Modern Standby laptops, Windows
+      terminates power requests some minutes after the sleep timeout when running on battery,
+      so <code>--plugged-only</code> is the dependable mode there. And on sway or Hyprland the
+      suspend block still works, but screen blanking does not: the Wayland idle&#8209;inhibit
+      protocol needs a surface to attach to, and a terminal program has none.
+    </p>
+  </section>
+
+  <!-- ============ INSTALL ============ -->
+  <section class="stack">
+    <span class="eyebrow">Get it</span>
+    <h2>One binary, no runtime, nothing to configure.</h2>
+
+    <div class="grid2" style="margin-top:8px; gap:24px 36px;">
+      <div class="stack-s">
+        <span class="k feat" style="color:var(--muted); font-family:var(--mono); font-size:.68rem; font-weight:700; letter-spacing:.12em; text-transform:uppercase;">From crates.io</span>
+        <div class="cmd"><span class="sigil">$</span>cargo install nosleep-tui</div>
+        <p class="footnote">
+          The crate is <code>nosleep-tui</code> because <code>nosleep</code> was already taken on
+          crates.io by an unrelated library. The command it installs is <code>nosleep</code>.
+        </p>
+      </div>
+      <div class="stack-s">
+        <span class="k feat" style="color:var(--muted); font-family:var(--mono); font-size:.68rem; font-weight:700; letter-spacing:.12em; text-transform:uppercase;">From source</span>
+        <div class="cmd"><span class="sigil">$</span>cargo install --path .</div>
+        <p class="footnote">
+          Requires Rust 1.89 or newer. The dependency tree is pure Rust &mdash; no C toolchain,
+          no <code>pkg-config</code>, no system libraries.
+        </p>
+      </div>
+    </div>
+
+    <div class="stack-s" style="margin-top:20px;">
+      <span class="eyebrow">Then</span>
+      <pre class="block">nosleep                    <span style="color:var(--muted)"># stay awake while this runs</span>
+nosleep --plugged-only     <span style="color:var(--muted)"># ...but not on battery</span>
+nosleep --inhibit-lid      <span style="color:var(--muted)"># also block lid-close suspend (Linux)</span>
+nosleep --why "rendering"  <span style="color:var(--muted)"># reason shown in systemd-inhibit --list</span></pre>
+      <p class="footnote">
+        Keys: <kbd>m</kbd> mode &middot; <kbd>l</kbd> lid block &middot;
+        <kbd>&larr;</kbd>&thinsp;<kbd>&rarr;</kbd> splash &middot; <kbd>q</kbd> quit.
+        Or just close the terminal.
+      </p>
+    </div>
+  </section>
+
+  <footer>
+    <p>
+      nosleep &mdash; MIT licensed.
+      <a href="https://github.com/lariocpt/nosleep">github.com/lariocpt/nosleep</a>
+    </p>
+    <p style="margin-top:6px; opacity:.75;">The splash above is rendered with the app's own block font.</p>
+  </footer>
+
+</div>
+
+<script>
+"use strict";
+
+/* The app's 5-row block font, lifted verbatim from src/art.rs so the hero is set
+   in the same typeface the program actually draws with. */
+const GLYPHS = {
+  A:[" ### ","#   #","#####","#   #","#   #"], B:["#### ","#   #","#### ","#   #","#### "],
+  C:[" ####","#    ","#    ","#    "," ####"], D:["#### ","#   #","#   #","#   #","#### "],
+  E:["#####","#    ","#### ","#    ","#####"], F:["#####","#    ","#### ","#    ","#    "],
+  G:[" ####","#    ","# ###","#   #"," ####"], H:["#   #","#   #","#####","#   #","#   #"],
+  I:["#####","  #  ","  #  ","  #  ","#####"], J:["    #","    #","    #","#   #"," ### "],
+  K:["#   #","#  # ","###  ","#  # ","#   #"], L:["#    ","#    ","#    ","#    ","#####"],
+  M:["#   #","## ##","# # #","#   #","#   #"], N:["#   #","##  #","# # #","#  ##","#   #"],
+  O:[" ### ","#   #","#   #","#   #"," ### "], P:["#### ","#   #","#### ","#    ","#    "],
+  Q:[" ### ","#   #","#   #","#  # "," ## #"], R:["#### ","#   #","#### ","#  # ","#   #"],
+  S:[" ####","#    "," ### ","    #","#### "], T:["#####","  #  ","  #  ","  #  ","  #  "],
+  U:["#   #","#   #","#   #","#   #"," ### "], V:["#   #","#   #","#   #"," # # ","  #  "],
+  W:["#   #","#   #","# # #","## ##","#   #"], X:["#   #"," # # ","  #  "," # # ","#   #"],
+  Y:["#   #"," # # ","  #  ","  #  ","  #  "], Z:["#####","   # ","  #  "," #   ","#####"],
+  "'":["#","#"," "," "," "]
+};
+const BLANK = ["  ","  ","  ","  ","  "];
+const ROWS = 5;
+
+function renderLine(text) {
+  const rows = ["", "", "", "", ""];
+  [...text.toUpperCase()].forEach((ch, i) => {
+    const g = GLYPHS[ch] || BLANK;
+    for (let r = 0; r < ROWS; r++) {
+      if (i > 0) rows[r] += " ";
+      rows[r] += g[r].replace(/#/g, "█");
+    }
+  });
+  return rows;
+}
+
+function renderSplash(lines) {
+  const out = [];
+  lines.forEach((l, i) => {
+    if (i > 0) out.push("");
+    out.push(...renderLine(l));
+  });
+  // Pad every row to the widest so the <pre> block stays rectangular.
+  const w = Math.max(...out.map(r => r.length));
+  return out.map(r => r.padEnd(w, " ")).join("\n");
+}
+
+const splashEl = document.getElementById("splash");
+splashEl.textContent = renderSplash(["I CAN'T", "GET NO", "SLEEP"]);
+
+/* Pulse on the app's own cadence: it alternates every ~750ms while active. */
+const chipEl = document.getElementById("chip");
+let pulseOn = false;
+let pulseTimer = null;
+
+const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
+
+function startPulse() {
+  stopPulse();
+  if (reduceMotion.matches) { splashEl.dataset.state = "on"; return; }
+  pulseTimer = setInterval(() => {
+    pulseOn = !pulseOn;
+    splashEl.dataset.state = pulseOn ? "pulse" : "on";
+  }, 750);
+}
+function stopPulse() {
+  if (pulseTimer) { clearInterval(pulseTimer); pulseTimer = null; }
+}
+startPulse();
+reduceMotion.addEventListener("change", () => { alive ? startPulse() : stopPulse(); });
+
+/* ---------- the kill -9 demonstration ---------- */
+
+const nsRows = document.getElementById("ns-rows");
+const dRows  = document.getElementById("d-rows");
+const nsVerdict = document.getElementById("ns-verdict");
+const dVerdict  = document.getElementById("d-verdict");
+const nsPid = document.getElementById("ns-pid");
+const dPid  = document.getElementById("d-pid");
+const btnKill  = document.getElementById("btn-kill");
+const btnReset = document.getElementById("btn-reset");
+
+let alive = true;
+
+const NOSLEEP_LOCKS = [
+  { what: "ScreenSaver cookie 0x1f4a",
+    aliveNote: "held on this process's bus connection",
+    deadNote:  "connection dropped → compositor released it" },
+  { what: "logind fd 7 — sleep:idle",
+    aliveNote: "lock lasts as long as the fd is open",
+    deadNote:  "kernel closed the fd → lock gone" }
+];
+
+const DAEMON_LOCKS = [
+  { what: "power profile — sleep disabled",
+    aliveNote: "written to system settings at startup",
+    deadNote:  "never restored — no cleanup code ran", stale: true },
+  { what: "helper daemon pid 4131",
+    aliveNote: "spawned to hold the lock",
+    deadNote:  "orphaned — still running, still inhibiting", stale: true }
+];
+
+function paint(container, locks) {
+  container.replaceChildren(...locks.map(l => {
+    const row = document.createElement("div");
+    row.className = "row";
+
+    const left = document.createElement("div");
+    left.className = "what";
+    left.append(l.what);
+    const note = document.createElement("span");
+    note.className = "note";
+    note.textContent = alive ? l.aliveNote : l.deadNote;
+    left.append(note);
+
+    const st = document.createElement("span");
+    if (alive)          { st.className = "state on";   st.textContent = "held"; }
+    else if (l.stale)   { st.className = "state warn"; st.textContent = "stale"; }
+    else                { st.className = "state off";  st.textContent = "released"; }
+
+    row.append(left, st);
+    return row;
+  }));
+}
+
+function render() {
+  paint(nsRows, NOSLEEP_LOCKS);
+  paint(dRows,  DAEMON_LOCKS);
+
+  nsPid.textContent = alive ? "pid 4127 · running" : "pid 4127 · killed";
+  dPid.textContent  = alive ? "pid 4128 · running" : "pid 4128 · killed";
+  nsPid.className = alive ? "state on" : "state off";
+  dPid.className  = alive ? "state on" : "state off";
+
+  if (alive) {
+    nsVerdict.dataset.tone = "good";
+    nsVerdict.textContent = "Machine awake. Both locks held by a living process.";
+    dVerdict.dataset.tone = "good";
+    dVerdict.textContent = "Machine awake. Locks held on your behalf, elsewhere.";
+  } else {
+    nsVerdict.dataset.tone = "dead";
+    nsVerdict.textContent = "Normal sleep restored. Nothing to clean up — no cleanup code had to run.";
+    dVerdict.dataset.tone = "bad";
+    dVerdict.textContent = "Still awake. Nothing is watching any more, and the only way back is to undo it by hand.";
+  }
+
+  splashEl.dataset.state = alive ? "on" : "paused";
+  chipEl.dataset.state   = alive ? "on" : "dead";
+  chipEl.innerHTML = alive
+    ? "●&nbsp; Awake &mdash; always"
+    : "◌&nbsp; Process gone &mdash; sleep restored";
+
+  btnKill.disabled  = !alive;
+  btnReset.disabled = alive;
+  alive ? startPulse() : stopPulse();
+}
+
+btnKill.addEventListener("click",  () => { alive = false; render(); });
+btnReset.addEventListener("click", () => { alive = true;  render(); });
+
+render();
+</script>
+</body>
+</html>

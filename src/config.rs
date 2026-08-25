@@ -66,7 +66,11 @@ pub struct State {
 /// the user happened to launch from.
 pub fn state_path() -> Option<PathBuf> {
     #[cfg(windows)]
-    let base = resolve_base(std::env::var_os("LOCALAPPDATA").map(PathBuf::from), None, &[]);
+    let base = resolve_base(
+        std::env::var_os("LOCALAPPDATA").map(PathBuf::from),
+        None,
+        &[],
+    );
     #[cfg(not(windows))]
     let base = resolve_base(
         std::env::var_os("XDG_STATE_HOME").map(PathBuf::from),
