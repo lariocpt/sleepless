@@ -36,9 +36,13 @@ jobs:
           - target: x86_64-unknown-linux-musl
             os: ubuntu-latest
             tool: cross
+          # cross assumes an x86_64 host and tries to install the x86_64 toolchain,
+          # which fails on an arm runner. This target is the runner's own
+          # architecture anyway -- only the libc differs -- and Rust ships
+          # self-contained musl crt objects, so plain cargo builds it.
           - target: aarch64-unknown-linux-musl
             os: ubuntu-24.04-arm
-            tool: cross
+            tool: cargo
           # A glibc build too, on the oldest supported image for the lowest floor.
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-22.04
