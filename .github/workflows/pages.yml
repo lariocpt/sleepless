@@ -17,6 +17,10 @@ concurrency:
 
 jobs:
   deploy:
+    # Pages is not enabled on a private repository without a paid plan, so this
+    # would go red on every push to main until the repo is public. Skip until
+    # then; `enablement: true` below lets it configure itself when it runs.
+    if: ${{ github.event.repository.private == false }}
     environment:
       name: github-pages
       url: ${{ steps.deploy.outputs.page_url }}
@@ -27,6 +31,8 @@ jobs:
       # with no dependencies beyond Google Fonts, matching the project's own
       # "one binary, no toolchain" posture.
       - uses: actions/configure-pages@v5
+        with:
+          enablement: true
       - uses: actions/upload-pages-artifact@v3
         with:
           path: docs
