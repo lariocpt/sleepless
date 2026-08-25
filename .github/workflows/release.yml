@@ -10,7 +10,19 @@ permissions:
   attestations: write
 
 jobs:
+  # upload-rust-binary-action uploads *into* a release; a tag push does not create
+  # one, so every matrix job failed with "release not found". Create it first and
+  # let the uploads attach to it.
+  create-release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: taiki-e/create-gh-release-action@v1
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
   upload:
+    needs: create-release
     strategy:
       fail-fast: false
       matrix:
