@@ -78,6 +78,13 @@ impl App {
         };
     }
 
+    /// Absolute setters, as opposed to the toggles: these exist for the tray
+    /// menu's radio group and checkbox, which report a chosen state rather than
+    /// a change. Nothing else calls them, so they are dead where no tray is built.
+    #[cfg_attr(
+        not(all(target_os = "linux", feature = "tray")),
+        allow(dead_code, reason = "tray menu API; tray is Linux-only")
+    )]
     pub fn set_mode(&mut self, mode: Mode) {
         self.mode = mode;
     }
@@ -86,6 +93,10 @@ impl App {
         self.lid = !self.lid;
     }
 
+    #[cfg_attr(
+        not(all(target_os = "linux", feature = "tray")),
+        allow(dead_code, reason = "tray menu API; tray is Linux-only")
+    )]
     pub fn set_lid(&mut self, lid: bool) {
         self.lid = lid;
     }

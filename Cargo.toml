@@ -1,9 +1,22 @@
 [package]
-name = "nosleep"
+name = "nosleep-tui"
 version = "0.1.0"
 edition = "2024"
+rust-version = "1.88"
 description = "Keep your computer awake while this runs in a terminal — I CAN'T GET NO SLEEP"
 license = "MIT"
+repository = "https://github.com/lariocpt/nosleep"
+homepage = "https://github.com/lariocpt/nosleep"
+readme = "README.md"
+keywords = ["tui", "sleep", "caffeine", "power", "terminal"]
+categories = ["command-line-utilities"]
+exclude = ["/.github", "/.claude", "/CLAUDE.md"]
+
+# The crate is `nosleep-tui` because `nosleep` was already taken on crates.io by an
+# unrelated library. The command is what users type, so it stays `nosleep`.
+[[bin]]
+name = "nosleep"
+path = "src/main.rs"
 
 [dependencies]
 ratatui = "0.30"
@@ -12,13 +25,18 @@ anyhow = "1"
 serde = { version = "1", features = ["derive"] }
 toml = "1.1"
 
+# SIGTERM/SIGINT handling is wanted on every Unix, not just Linux: without it macOS
+# dies inside the alternate screen with raw mode still on.
+[target.'cfg(unix)'.dependencies]
+signal-hook = "0.4"
+
 [target.'cfg(target_os = "linux")'.dependencies]
 zbus = "5"
 ksni = { version = "0.3.6", features = ["blocking"], optional = true }
-signal-hook = "0.4"
 
-# Untested fallback backends; the Linux path talks D-Bus directly (see src/inhibit.rs)
-[target.'cfg(not(target_os = "linux"))'.dependencies]
+# macOS/Windows go through keepawake, which wraps IOPMAssertionCreateWithName and
+# SetThreadExecutionState respectively — both process-scoped, so the core guarantee holds.
+[target.'cfg(any(target_os = "macos", target_os = "windows"))'.dependencies]
 keepawake = "0.6"
 starship-battery = "0.11"
 
@@ -28,3 +46,8 @@ tray = ["dep:ksni"]
 
 [dev-dependencies]
 tempfile = "3"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true
