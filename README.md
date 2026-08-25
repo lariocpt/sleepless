@@ -83,11 +83,15 @@ systemd-inhibit --list | grep sleepless
 ## Install
 
 ```sh
-cargo install sleepless       # from crates.io
-cargo install --path .        # from a clone
+cargo install sleepless                      # crates.io
+brew install lariocpt/sleepless/sleepless    # macOS / Linuxbrew
+cargo install --path .                       # from a clone
 ```
 
-Requires Rust 1.89 or newer. The dependency tree is pure Rust — no C toolchain, no
+Or grab a prebuilt binary from [Releases](https://github.com/lariocpt/sleepless/releases)
+— Linux builds are static musl, so they have no glibc floor and run anywhere.
+
+Building from source requires Rust 1.89 or newer. The dependency tree is pure Rust — no C toolchain, no
 `pkg-config`, no system libraries — so cross-compiling and static musl builds work without
 any extra setup.
 
