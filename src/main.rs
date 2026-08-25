@@ -18,9 +18,9 @@ use std::time::{Duration, Instant};
 /// Keep your computer awake while this runs. Close the terminal to stop.
 ///
 /// Options not given on the command line fall back to
-/// ~/.config/nosleep/config.toml, then to built-in defaults.
+/// ~/.config/sleepless/config.toml, then to built-in defaults.
 #[derive(Parser, Debug)]
-#[command(version, about)]
+#[command(name = "sleepless", version, about)]
 struct Args {
     /// Only keep awake while on AC power (toggle at runtime with 'm')
     #[arg(long)]
@@ -30,11 +30,11 @@ struct Args {
     #[arg(long, conflicts_with = "plugged_only")]
     always: bool,
 
-    /// Also block lid-close suspend (logind handle-lid-switch)
+    /// Also block lid-close suspend (Linux only: logind handle-lid-switch)
     #[arg(long)]
     inhibit_lid: bool,
 
-    /// Don't show a system tray icon
+    /// Don't show a system tray icon (Linux only)
     #[arg(long)]
     no_tray: bool,
 
@@ -46,7 +46,8 @@ struct Args {
     #[arg(long)]
     splash: Option<String>,
 
-    /// Reason shown in `systemd-inhibit --list` [default: "I can't get no sleep"]
+    /// Reason recorded with the lock, e.g. in `systemd-inhibit --list`
+    /// [default: "I can't get no sleep"]
     #[arg(long)]
     why: Option<String>,
 
@@ -95,7 +96,7 @@ fn main() -> Result<()> {
             }),
     };
 
-    let buses = inhibit::Buses::connect()?;
+    let buses = inhibit::Buses::connect();
     let mut app = App::new(mode, lid, pulse, why);
     app.splashes = splashes;
     app.splash_idx = splash_idx;
@@ -111,7 +112,7 @@ fn main() -> Result<()> {
     // SIGTERM/SIGINT from outside: break the loop so the terminal is restored.
     // SIGHUP stays at its default (die immediately) — the OS releases the locks.
     let term = Arc::new(AtomicBool::new(false));
-    #[cfg(target_os = "linux")]
+    #[cfg(unix)]
     for sig in [signal_hook::consts::SIGTERM, signal_hook::consts::SIGINT] {
         let _ = signal_hook::flag::register(sig, Arc::clone(&term));
     }
@@ -157,7 +158,7 @@ fn run_tui(
                     app.reconcile(buses);
                     edge = true;
                 }
-                KeyCode::Char('l') => {
+                KeyCode::Char('l') if inhibit::CAPS.lid => {
                     app.toggle_lid();
                     app.reconcile(buses);
                     edge = true;
@@ -330,11 +331,11 @@ fn print_state(app: &App) {
     } else if app.inhibit_err.is_some() {
         "NOT INHIBITING (error)".into()
     } else {
-        "PAUSED — on battery".into()
+        "PAUSED (on battery)".into()
     };
-    println!("nosleep — {state} · {}", app.power.describe());
+    println!("sleepless - {state} | {}", app.power.describe_ascii());
     if let Some(g) = &app.guard {
-        println!("  holding: {}", g.status().describe());
+        println!("  holding: {}", g.status().describe_ascii());
         for note in &g.status().notes {
             println!("  note: {note}");
         }

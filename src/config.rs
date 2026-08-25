@@ -1,5 +1,5 @@
-//! Config file: `$XDG_CONFIG_HOME/nosleep/config.toml` (usually
-//! `~/.config/nosleep/config.toml`).
+//! Config file: `$XDG_CONFIG_HOME/sleepless/config.toml` (usually
+//! `~/.config/sleepless/config.toml`).
 //!
 //! Everything is optional and CLI flags win over the file. Broken entries are
 //! skipped with a warning shown in the TUI, never fatal — a bad config must
@@ -44,7 +44,7 @@ pub struct Loaded {
 }
 
 /// Runtime changes (mode/lid toggles, chosen splash), saved as they happen and
-/// restored on the next launch. Kept in `$XDG_STATE_HOME/nosleep/state.toml`
+/// restored on the next launch. Kept in `$XDG_STATE_HOME/sleepless/state.toml`
 /// (usually `~/.local/state/...`), separate from the hand-edited config.toml,
 /// which is never rewritten. Precedence: CLI flags > state > config.toml.
 #[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -58,19 +58,49 @@ pub struct State {
     pub splash: Option<String>,
 }
 
-pub fn state_path() -> PathBuf {
-    let base = std::env::var_os("XDG_STATE_HOME")
-        .map(PathBuf::from)
+/// `$XDG_STATE_HOME` (Unix) or `%LOCALAPPDATA%` (Windows).
+///
+/// Returns `None` when there is nowhere sensible to write. It must never fall
+/// back to the current directory: on Windows `$HOME` is normally unset, and the
+/// old fallback silently scattered `sleepless/state.toml` into whatever directory
+/// the user happened to launch from.
+pub fn state_path() -> Option<PathBuf> {
+    #[cfg(windows)]
+    let base = resolve_base(
+        std::env::var_os("LOCALAPPDATA").map(PathBuf::from),
+        None,
+        &[],
+    );
+    #[cfg(not(windows))]
+    let base = resolve_base(
+        std::env::var_os("XDG_STATE_HOME").map(PathBuf::from),
+        home_dir(),
+        &[".local", "state"],
+    );
+    Some(base?.join("sleepless").join("state.toml"))
+}
+
+/// Pure part of the path rules, so they can be tested without mutating the
+/// process environment (which is `unsafe` in edition 2024 and racy under a
+/// parallel test runner).
+///
+/// A relative `explicit` is ignored: the XDG spec says a non-absolute
+/// `XDG_*_HOME` must be treated as unset.
+fn resolve_base(
+    explicit: Option<PathBuf>,
+    home: Option<PathBuf>,
+    home_rel: &[&str],
+) -> Option<PathBuf> {
+    explicit
         .filter(|p| p.is_absolute())
-        .or_else(|| {
-            std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local").join("state"))
-        })
-        .unwrap_or_else(|| PathBuf::from("."));
-    base.join("nosleep").join("state.toml")
+        .or_else(|| home.map(|h| home_rel.iter().fold(h, |acc, c| acc.join(c))))
 }
 
 pub fn load_state() -> State {
-    load_state_from(&state_path())
+    match state_path() {
+        Some(p) => load_state_from(&p),
+        None => State::default(),
+    }
 }
 
 fn load_state_from(path: &Path) -> State {
@@ -88,7 +118,10 @@ fn load_state_from(path: &Path) -> State {
 }
 
 pub fn save_state(state: &State) -> std::io::Result<()> {
-    save_state_to(&state_path(), state)
+    let path = state_path().ok_or_else(|| {
+        std::io::Error::other("no state directory (set XDG_STATE_HOME, HOME or LOCALAPPDATA)")
+    })?;
+    save_state_to(&path, state)
 }
 
 fn save_state_to(path: &Path, state: &State) -> std::io::Result<()> {
@@ -102,18 +135,31 @@ fn save_state_to(path: &Path, state: &State) -> std::io::Result<()> {
     std::fs::rename(&tmp, path)
 }
 
-pub fn config_path() -> PathBuf {
-    let base = std::env::var_os("XDG_CONFIG_HOME")
-        .map(PathBuf::from)
-        .filter(|p| p.is_absolute())
-        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")))
-        .unwrap_or_else(|| PathBuf::from("."));
-    base.join("nosleep").join("config.toml")
+/// `$XDG_CONFIG_HOME` (Unix) or `%APPDATA%` (Windows). See [`state_path`] for
+/// why this is an `Option` rather than a fallback to `.`.
+///
+/// macOS deliberately keeps the XDG layout instead of `~/Library/Application
+/// Support`: this is a terminal program and `~/.config` is where its users look.
+pub fn config_path() -> Option<PathBuf> {
+    #[cfg(windows)]
+    let base = resolve_base(std::env::var_os("APPDATA").map(PathBuf::from), None, &[]);
+    #[cfg(not(windows))]
+    let base = resolve_base(
+        std::env::var_os("XDG_CONFIG_HOME").map(PathBuf::from),
+        home_dir(),
+        &[".config"],
+    );
+    Some(base?.join("sleepless").join("config.toml"))
 }
 
 pub fn load() -> Loaded {
-    let path = config_path();
     let mut warnings = Vec::new();
+    let Some(path) = config_path() else {
+        return Loaded {
+            file: FileConfig::default(),
+            warnings,
+        };
+    };
     let file = match std::fs::read_to_string(&path) {
         Err(_) => FileConfig::default(), // no config file is fine
         Ok(s) => match toml::from_str(&s) {
@@ -210,11 +256,17 @@ fn resolve_color(
 
 fn expand_home(p: &str) -> PathBuf {
     if let Some(rest) = p.strip_prefix("~/")
-        && let Some(home) = std::env::var_os("HOME")
+        && let Some(home) = home_dir()
     {
-        return PathBuf::from(home).join(rest);
+        return home.join(rest);
     }
     PathBuf::from(p)
+}
+
+fn home_dir() -> Option<PathBuf> {
+    std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
+        .map(PathBuf::from)
 }
 
 /// Named terminal colors or `#rrggbb`.
@@ -384,6 +436,48 @@ color = "chartreuse-ish"
         assert_eq!(load_state_from(&path), State::default(), "broken file");
         std::fs::write(&path, "mode = \"sometimes\"").unwrap();
         assert_eq!(load_state_from(&path).mode, None, "unknown mode dropped");
+    }
+
+    #[test]
+    fn base_path_rules() {
+        // What counts as absolute is platform-specific: "/xdg" has no drive
+        // letter, so Windows considers it relative.
+        #[cfg(windows)]
+        let (abs, home_dir) = ("C:\\xdg", "C:\\Users\\u");
+        #[cfg(not(windows))]
+        let (abs, home_dir) = ("/xdg", "/home/u");
+        let home = || Some(PathBuf::from(home_dir));
+
+        // Explicit absolute override wins.
+        assert_eq!(
+            resolve_base(Some(abs.into()), home(), &[".config"]),
+            Some(PathBuf::from(abs))
+        );
+        // A relative override is treated as unset, per the XDG spec.
+        assert_eq!(
+            resolve_base(Some("rel/ative".into()), home(), &[".config"]),
+            Some(PathBuf::from(home_dir).join(".config"))
+        );
+        // Multi-segment fallback, as used for the state dir.
+        assert_eq!(
+            resolve_base(None, home(), &[".local", "state"]),
+            Some(PathBuf::from(home_dir).join(".local").join("state"))
+        );
+        // Nothing to go on: None, never the current directory.
+        assert_eq!(resolve_base(None, None, &[".config"]), None);
+    }
+
+    #[test]
+    fn real_paths_end_in_the_app_dir() {
+        // Whatever the platform resolves to, the tail must be stable.
+        if let Some(p) = config_path() {
+            assert!(p.is_absolute(), "{p:?} should be absolute");
+            assert!(p.ends_with("sleepless/config.toml"), "{p:?}");
+        }
+        if let Some(p) = state_path() {
+            assert!(p.is_absolute(), "{p:?} should be absolute");
+            assert!(p.ends_with("sleepless/state.toml"), "{p:?}");
+        }
     }
 
     #[test]
