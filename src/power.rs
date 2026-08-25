@@ -1,5 +1,11 @@
 //! Power-source detection.
 //!
+//! No emoji in the rendered strings, deliberately. `🔋` (U+1F50B) needs a colour
+//! emoji font that minimal systems and bare TTYs do not have, and both it and `⚡`
+//! carry emoji presentation, so terminals draw them two cells wide while the
+//! layout math in `art.rs` counts them as one and the centring drifts. The words
+//! already say what the icons said.
+//!
 //! Linux reads sysfs directly: any `type == Mains` supply that is `online`
 //! means we're on AC. Battery percentage/status are display-only — charge-limit
 //! firmware reports states like "Not charging" that must never be interpreted
@@ -25,16 +31,30 @@ impl Default for PowerStatus {
 }
 
 impl PowerStatus {
+    /// Plain-ASCII form for `--smoke` and anything a script will grep.
+    pub fn describe_ascii(&self) -> String {
+        let batt = self.battery_percent.map(|p| match &self.battery_state {
+            Some(st) => format!("battery {p}% ({st})"),
+            None => format!("battery {p}%"),
+        });
+        match (self.on_ac, batt) {
+            (true, Some(b)) => format!("AC - {b}"),
+            (true, None) => "AC".into(),
+            (false, Some(b)) => format!("BAT - {b}"),
+            (false, None) => "on battery".into(),
+        }
+    }
+
     pub fn describe(&self) -> String {
         let batt = self.battery_percent.map(|p| match &self.battery_state {
             Some(st) => format!("battery {p}% ({st})"),
             None => format!("battery {p}%"),
         });
         match (self.on_ac, batt) {
-            (true, Some(b)) => format!("⚡ AC — {b}"),
-            (true, None) => "⚡ AC".into(),
-            (false, Some(b)) => format!("🔋 {b}"),
-            (false, None) => "🔋 on battery".into(),
+            (true, Some(b)) => format!("AC — {b}"),
+            (true, None) => "AC".into(),
+            (false, Some(b)) => b,
+            (false, None) => "on battery".into(),
         }
     }
 }
@@ -44,7 +64,7 @@ pub fn read() -> PowerStatus {
     read_from(std::path::Path::new("/sys/class/power_supply"))
 }
 
-#[cfg(target_os = "linux")]
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 fn read_from(root: &std::path::Path) -> PowerStatus {
     let mut mains_seen = false;
     let mut mains_online = false;
@@ -100,7 +120,7 @@ fn read_from(root: &std::path::Path) -> PowerStatus {
     }
 }
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 pub fn read() -> PowerStatus {
     use starship_battery::{Manager, State};
     let mut out = PowerStatus::default();
@@ -122,7 +142,7 @@ pub fn read() -> PowerStatus {
     out
 }
 
-#[cfg(all(test, target_os = "linux"))]
+#[cfg(test)]
 mod tests {
     use super::*;
     use std::fs;
@@ -228,4 +248,9 @@ mod tests {
         );
         assert!(!read_from(t.path()).on_ac);
     }
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+pub fn read() -> PowerStatus {
+    PowerStatus::default()
 }

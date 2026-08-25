@@ -3,6 +3,7 @@
 //! but couldn't get them.
 
 use crate::app::{App, Mode};
+use crate::inhibit::CAPS;
 use ratatui::Frame;
 use ratatui::layout::{Alignment, Constraint, Flex, Layout};
 use ratatui::style::{Color, Style};
@@ -113,12 +114,14 @@ fn footer(app: &App) -> Line<'static> {
     let mut spans = vec![
         Span::styled("[m]", key),
         Span::styled(format!(" mode: {}   ", app.mode.label()), dim),
-        Span::styled("[l]", key),
-        Span::styled(
+    ];
+    if CAPS.lid {
+        spans.push(Span::styled("[l]", key));
+        spans.push(Span::styled(
             format!(" lid block: {}   ", if app.lid { "on" } else { "off" }),
             dim,
-        ),
-    ];
+        ));
+    }
     if app.splashes.len() > 1 {
         spans.push(Span::styled("[←/→]", key));
         spans.push(Span::styled(
@@ -136,5 +139,6 @@ fn footer(app: &App) -> Line<'static> {
     if let Some(note) = &app.tray_note {
         spans.push(Span::styled(format!("   · {note}"), dim));
     }
+    spans.push(Span::styled(format!("   · {}", CAPS.mechanism), dim));
     Line::from(spans)
 }

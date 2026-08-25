@@ -1,4 +1,4 @@
-# nosleep — project rules
+# sleepless — project rules
 
 - **README.md is a living document.** Every implementation phase ends by updating README.md to
   match reality: features, CLI flags, keybindings, install/run instructions, and behavior notes.

@@ -1,0 +1,66 @@
+name: release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+
+jobs:
+  upload:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # musl-static is the recommended Linux download: it has no glibc floor
+          # at all, so it runs on Alpine and on old enterprise distros alike.
+          # (glibc symbol versioning is a floor, not a ceiling -- a binary records
+          # the minimum version each imported symbol needs, so build-old/run-new is
+          # safe and the reverse is not. Static musl removes the question entirely,
+          # which this dependency tree allows because it is pure Rust.)
+          - target: x86_64-unknown-linux-musl
+            os: ubuntu-latest
+            tool: cross
+          - target: aarch64-unknown-linux-musl
+            os: ubuntu-24.04-arm
+            tool: cross
+          # A glibc build too, on the oldest supported image for the lowest floor.
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-22.04
+            tool: cargo
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-24.04-arm
+            tool: cargo
+          # Build macOS on macOS: arm64 Mach-O needs a signature, even an ad-hoc
+          # one, and the linker only applies that on a Mac.
+          - target: aarch64-apple-darwin
+            os: macos-latest
+            tool: cargo
+          - target: x86_64-apple-darwin
+            os: macos-15-intel
+            tool: cargo
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            tool: cargo
+          - target: aarch64-pc-windows-msvc
+            os: windows-11-arm
+            tool: cargo
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: taiki-e/upload-rust-binary-action@v1
+        with:
+          bin: sleepless
+          target: ${{ matrix.target }}
+          build-tool: ${{ matrix.tool }}
+          locked: true
+          checksum: sha256
+          include: README.md,LICENSE
+          archive: $bin-$target-$tag
+          token: ${{ secrets.GITHUB_TOKEN }}

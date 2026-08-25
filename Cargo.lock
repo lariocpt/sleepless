@@ -1192,23 +1192,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "nosleep"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "clap",
- "keepawake",
- "ksni",
- "ratatui",
- "serde",
- "signal-hook 0.4.4",
- "starship-battery",
- "tempfile",
- "toml",
- "zbus",
-]
-
-[[package]]
 name = "num-conv"
 version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1886,6 +1869,23 @@ name = "slab"
 version = "0.4.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0c790de23124f9ab44544d7ac05d60440adc586479ce501c1d6d7da3cd8c9cf5"
+
+[[package]]
+name = "sleepless"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "keepawake",
+ "ksni",
+ "ratatui",
+ "serde",
+ "signal-hook 0.4.4",
+ "starship-battery",
+ "tempfile",
+ "toml",
+ "zbus",
+]
 
 [[package]]
 name = "smallvec"

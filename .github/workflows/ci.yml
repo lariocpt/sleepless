@@ -1,0 +1,155 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # Compile every target we ship, including the ones with no runner. `cargo clippy`
+  # does not link, so this needs no cross-linker and no C toolchain -- the whole
+  # dependency tree is pure Rust, with no build scripts.
+  lint:
+    name: clippy ${{ matrix.target }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - x86_64-unknown-linux-gnu
+          - aarch64-unknown-linux-gnu
+          - x86_64-unknown-linux-musl
+          - aarch64-unknown-linux-musl
+          - x86_64-apple-darwin
+          - aarch64-apple-darwin
+          - x86_64-pc-windows-msvc
+          - aarch64-pc-windows-msvc
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo clippy --locked --target ${{ matrix.target }} --all-targets -- -D warnings
+      # The tray is a default feature but Linux-only; make sure a no-tray build
+      # stays clean too, since that is how a minimal package gets built.
+      - run: cargo clippy --locked --target ${{ matrix.target }} --no-default-features --all-targets -- -D warnings
+
+  fmt:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with: { components: rustfmt }
+      - run: cargo fmt --check
+
+  # MSRV is 1.89, forced by starship-battery on macOS/Windows. ratatui needs 1.88
+  # and is the Linux ceiling. Cargo has no per-target rust-version, so we declare
+  # the higher one and check it on an OS that actually pulls that dependency.
+  msrv:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@1.89.0
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo check --locked --all-targets
+
+  test:
+    name: test ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test --locked
+      - run: cargo build --locked
+
+      # A green compile proves nothing about whether the lock is real. Ask the
+      # platform itself whether it believes we are holding one.
+      - name: smoke - linux
+        if: runner.os == 'Linux'
+        run: |
+          set -eux
+          # GitHub runners have a system bus but no graphical session, so the
+          # ScreenSaver call has no provider. That is a supported degradation and
+          # must still exit 0 -- this is the regression test for the startup path
+          # that used to refuse to run without D-Bus.
+          ./target/debug/sleepless --always --smoke 2 | tee out.txt
+          grep -q 'sleepless - ' out.txt
+          # And with no buses at all, the way a container sees the world.
+          env DBUS_SESSION_BUS_ADDRESS=unix:path=/nonexistent \
+              DBUS_SYSTEM_BUS_ADDRESS=unix:path=/nonexistent \
+              ./target/debug/sleepless --always --smoke 1 | tee bare.txt
+          grep -q 'NOT INHIBITING' bare.txt
+          # Output feeds greps like these, so it must stay ASCII.
+          ! LC_ALL=C grep -qP '[^\x00-\x7F]' out.txt
+
+      - name: smoke - macos
+        if: runner.os == 'macOS'
+        run: |
+          set -eux
+          ./target/debug/sleepless --always --smoke 8 &
+          pid=$!
+          sleep 3
+          # The real assertion: does powerd think *we* are holding one? Match the
+          # owning process, not a bare name -- the GitHub macOS runner is an Anka
+          # VM that holds its own assertion called "Anka sleeplessness", which a
+          # substring match on "sleepless" happily finds.
+          pmset -g assertions | tee assertions.txt
+          grep -qE 'pid [0-9]+\(sleepless\).*PreventUserIdleSystemSleep' assertions.txt
+          grep -qE 'pid [0-9]+\(sleepless\).*PreventUserIdleDisplaySleep' assertions.txt
+          # ...and does it go away when the process is killed outright?
+          kill -9 $pid; sleep 2
+          if pmset -g assertions | grep -qE 'pid [0-9]+\(sleepless\)'; then
+            echo "FAIL: assertion survived SIGKILL"; exit 1
+          fi
+
+      - name: smoke - windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $p = Start-Process -PassThru -NoNewWindow .\target\debug\sleepless.exe '--always','--smoke','8'
+          Start-Sleep -Seconds 3
+          $req = powercfg /requests | Out-String
+          Write-Host $req
+          # Match the executable, so an unrelated request mentioning the word
+          # cannot satisfy this the way "Anka sleeplessness" did on macOS.
+          if ($req -notmatch 'sleepless\.exe') { throw "FAIL: no power request registered" }
+          Stop-Process -Id $p.Id -Force
+          Start-Sleep -Seconds 2
+          if ((powercfg /requests | Out-String) -match 'sleepless\.exe') {
+            throw "FAIL: power request survived the process"
+          }
+
+  # Native arm64. GitHub's arm runners are free for public repositories and
+  # unavailable on a private one, so this job sits out until the repo is public.
+  test-arm:
+    name: test ${{ matrix.os }}
+    if: ${{ github.event.repository.private == false }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04-arm, windows-11-arm]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test --locked
+      - run: cargo build --locked
