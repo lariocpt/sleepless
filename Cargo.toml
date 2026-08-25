@@ -12,7 +12,7 @@ homepage = "https://github.com/lariocpt/sleepless"
 readme = "README.md"
 keywords = ["tui", "sleep", "caffeine", "power", "terminal"]
 categories = ["command-line-utilities"]
-exclude = ["/.github", "/.claude", "/CLAUDE.md", "/assets", "/docs"]
+exclude = ["/.github", "/.claude", "/CLAUDE.md", "/docs"]
 
 [dependencies]
 ratatui = "0.30"
