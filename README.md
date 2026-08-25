@@ -4,7 +4,7 @@
 
 Keeps your computer awake for exactly as long as it's running.
 
-![sleepless in action](assets/demo.gif)
+![sleepless in action](docs/demo.gif)
 
 Every lock it takes is bound to the process itself, so closing the terminal — or
 `kill -9`-ing it, however rudely — restores normal sleep instantly. There is no daemon,
