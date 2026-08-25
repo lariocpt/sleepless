@@ -1,16 +1,30 @@
 //! Sleep/idle inhibition.
 //!
-//! Everything here is process-lifetime-bound: logind hands us a pipe fd that the
-//! kernel closes when we die, and the ScreenSaver grant is tied to our D-Bus
-//! connection (niri drops it on NameOwnerChanged). No cleanup is ever required —
-//! closing the terminal, SIGKILL included, releases every lock.
+//! Everything here is process-lifetime-bound, on every platform: logind hands us a
+//! pipe fd that the kernel closes when we die, the ScreenSaver grant is tied to our
+//! D-Bus connection (niri drops it on NameOwnerChanged), macOS powerd reaps
+//! IOPMAssertions when their owning task dies, and Windows clears a thread's
+//! execution state when the thread goes away. No cleanup is ever required — closing
+//! the terminal, SIGKILL included, releases every lock.
+
+/// What the platform backend is actually able to do, so the UI stops offering
+/// controls that do nothing here.
+#[derive(Debug, Clone, Copy)]
+pub struct Caps {
+    /// Lid-close suspend can be blocked (logind `handle-lid-switch`).
+    pub lid: bool,
+    /// Name of the mechanism, for the footer and bug reports.
+    pub mechanism: &'static str,
+}
+
+pub const CAPS: Caps = imp::CAPS;
 
 /// Which locks are actually held right now, for the UI.
 #[derive(Debug, Default, Clone)]
 pub struct LockStatus {
-    /// fd.o ScreenSaver inhibit held (suppresses the compositor idle chain).
+    /// Idle/screensaver inhibit held (suppresses the compositor idle chain).
     pub idle: bool,
-    /// logind `sleep:idle` block held.
+    /// System-sleep inhibit held.
     pub sleep: bool,
     /// `handle-lid-switch` included in the logind lock.
     pub lid: bool,
@@ -21,6 +35,28 @@ pub struct LockStatus {
 }
 
 impl LockStatus {
+    /// Plain-ASCII form for `--smoke` and anything a script will grep. The TUI
+    /// uses [`describe`](Self::describe); this one has to survive being piped
+    /// through a Windows console code page.
+    pub fn describe_ascii(&self) -> String {
+        let mark = |b: bool| if b { "yes" } else { "no" };
+        let lid = if self.lid_requested && !self.lid {
+            "refused"
+        } else {
+            mark(self.lid)
+        };
+        if CAPS.lid {
+            format!(
+                "idle={} sleep={} lid={}",
+                mark(self.idle),
+                mark(self.sleep),
+                lid
+            )
+        } else {
+            format!("idle={} sleep={}", mark(self.idle), mark(self.sleep))
+        }
+    }
+
     pub fn describe(&self) -> String {
         let mark = |b: bool| if b { "✓" } else { "✗" };
         let lid = if self.lid_requested && !self.lid {
@@ -30,21 +66,31 @@ impl LockStatus {
         } else {
             "✗"
         };
-        format!(
-            "idle {} · sleep {} · lid {}",
-            mark(self.idle),
-            mark(self.sleep),
-            lid
-        )
+        // Only mention lid where blocking it is even possible.
+        if CAPS.lid {
+            format!(
+                "idle {} · sleep {} · lid {}",
+                mark(self.idle),
+                mark(self.sleep),
+                lid
+            )
+        } else {
+            format!("idle {} · sleep {}", mark(self.idle), mark(self.sleep))
+        }
     }
 }
 
 #[cfg(target_os = "linux")]
 mod imp {
-    use super::LockStatus;
+    use super::{Caps, LockStatus};
     use anyhow::{Result, bail};
     use std::os::fd::OwnedFd;
     use zbus::blocking::Connection;
+
+    pub const CAPS: Caps = Caps {
+        lid: true,
+        mechanism: "D-Bus (ScreenSaver + logind)",
+    };
 
     const SCREENSAVER: (&str, &str, &str) = (
         "org.freedesktop.ScreenSaver",
@@ -52,8 +98,9 @@ mod imp {
         "org.freedesktop.ScreenSaver",
     );
 
-    /// Both bus connections, made once at startup. Either may be missing;
-    /// `acquire` works with whatever is reachable.
+    /// Both bus connections, made once at startup. Either may be missing — and so
+    /// may both: a bare TTY, a container or a non-systemd box still gets a running
+    /// app that says `✗ NOT INHIBITING`, rather than a refusal to start.
     pub struct Buses {
         session: Option<Connection>,
         system: Option<Connection>,
@@ -61,7 +108,7 @@ mod imp {
     }
 
     impl Buses {
-        pub fn connect() -> Result<Buses> {
+        pub fn connect() -> Buses {
             let mut notes = Vec::new();
             let session = match Connection::session() {
                 Ok(c) => Some(c),
@@ -77,14 +124,11 @@ mod imp {
                     None
                 }
             };
-            if session.is_none() && system.is_none() {
-                bail!("no D-Bus connection possible: {}", notes.join("; "));
-            }
-            Ok(Buses {
+            Buses {
                 session,
                 system,
                 notes,
-            })
+            }
         }
     }
 
@@ -221,16 +265,41 @@ mod imp {
     }
 }
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 mod imp {
-    use super::LockStatus;
+    //! keepawake wraps `IOPMAssertionCreateWithName` on macOS and
+    //! `SetThreadExecutionState` on Windows. Both are process-scoped, so the
+    //! core guarantee holds; neither spawns a subprocess.
+    //!
+    //! Option mapping matters here and is easy to get wrong:
+    //!   * `display` -> `PreventUserIdleDisplaySleep` / `ES_DISPLAY_REQUIRED`.
+    //!     We want this: on Linux `org.freedesktop.ScreenSaver.Inhibit` also
+    //!     suppresses blanking, so leaving it off made the same banner mean
+    //!     two different things depending on the OS.
+    //!   * `idle` -> `PreventUserIdleSystemSleep` / `ES_SYSTEM_REQUIRED`. This is
+    //!     the load-bearing one on both platforms.
+    //!   * `sleep` -> `PreventSystemSleep` on macOS (valid on AC only), but
+    //!     `ES_AWAYMODE_REQUIRED` on Windows, which Microsoft documents as
+    //!     Traditional-Sleep-only and explicitly not for portable machines.
+    //!     So we ask for it on macOS and never on Windows.
+    use super::{Caps, LockStatus};
     use anyhow::Result;
+
+    pub const CAPS: Caps = Caps {
+        lid: false,
+        #[cfg(target_os = "macos")]
+        mechanism: "IOPMAssertion",
+        #[cfg(target_os = "windows")]
+        mechanism: "SetThreadExecutionState",
+    };
+
+    const WANT_SYSTEM_SLEEP_ASSERTION: bool = cfg!(target_os = "macos");
 
     pub struct Buses;
 
     impl Buses {
-        pub fn connect() -> Result<Buses> {
-            Ok(Buses)
+        pub fn connect() -> Buses {
+            Buses
         }
     }
 
@@ -247,21 +316,40 @@ mod imp {
 
     pub fn acquire(_buses: &Buses, lid: bool, why: &str) -> Result<InhibitGuard> {
         let awake = keepawake::Builder::default()
-            .display(false)
+            .display(true)
             .idle(true)
-            .sleep(true)
+            .sleep(WANT_SYSTEM_SLEEP_ASSERTION)
             .reason(why)
             .app_name("nosleep")
             .app_reverse_domain("dev.lario.nosleep")
             .create()?;
+
+        // Only claim what we actually asked for and got. `create()` fails as a
+        // whole if any requested assertion fails, so reaching here means every
+        // requested lock is held — but `sleep` is not requested on Windows.
         let mut status = LockStatus {
             idle: true,
-            sleep: true,
+            sleep: WANT_SYSTEM_SLEEP_ASSERTION,
+            lid: false,
             lid_requested: lid,
-            ..Default::default()
+            notes: Vec::new(),
         };
         if lid {
-            status.notes.push("lid-close control is Linux-only".into());
+            status
+                .notes
+                .push("lid-close blocking is not available on this platform".into());
+        }
+        if cfg!(target_os = "macos") {
+            status
+                .notes
+                .push("PreventSystemSleep applies on AC power only".into());
+        }
+        if cfg!(target_os = "windows") {
+            status.notes.push(
+                "on Modern Standby laptops Windows may still sleep on battery; \
+                 --plugged-only is the dependable mode"
+                    .into(),
+            );
         }
         Ok(InhibitGuard {
             _awake: awake,
@@ -270,4 +358,45 @@ mod imp {
     }
 }
 
+// FreeBSD, illumos and friends: keepawake has no backend, so say so plainly
+// instead of failing at runtime with something cryptic.
+#[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+mod imp {
+    use super::{Caps, LockStatus};
+    use anyhow::{Result, bail};
+
+    pub const CAPS: Caps = Caps {
+        lid: false,
+        mechanism: "unsupported",
+    };
+
+    pub struct Buses;
+
+    impl Buses {
+        pub fn connect() -> Buses {
+            Buses
+        }
+    }
+
+    pub struct InhibitGuard {
+        status: LockStatus,
+    }
+
+    impl InhibitGuard {
+        pub fn status(&self) -> &LockStatus {
+            &self.status
+        }
+    }
+
+    pub fn acquire(_buses: &Buses, _lid: bool, _why: &str) -> Result<InhibitGuard> {
+        bail!("no sleep-inhibition backend for this platform")
+    }
+}
+
 pub use imp::{Buses, InhibitGuard, acquire};
+
+// Catch signature drift between the backends at compile time on every target.
+// Cheaper and clearer than a trait, given exactly one arm is ever compiled.
+const _: fn() -> Buses = Buses::connect;
+const _: fn(&Buses, bool, &str) -> anyhow::Result<InhibitGuard> = acquire;
+const _: fn(&InhibitGuard) -> &LockStatus = InhibitGuard::status;
