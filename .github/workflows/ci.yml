@@ -107,12 +107,16 @@ jobs:
           ./target/debug/sleepless --always --smoke 8 &
           pid=$!
           sleep 3
-          # The real assertion: does powerd think someone is holding one?
+          # The real assertion: does powerd think *we* are holding one? Match the
+          # owning process, not a bare name -- the GitHub macOS runner is an Anka
+          # VM that holds its own assertion called "Anka sleeplessness", which a
+          # substring match on "sleepless" happily finds.
           pmset -g assertions | tee assertions.txt
-          grep -q 'PreventUserIdleSystemSleep' assertions.txt
+          grep -qE 'pid [0-9]+\(sleepless\).*PreventUserIdleSystemSleep' assertions.txt
+          grep -qE 'pid [0-9]+\(sleepless\).*PreventUserIdleDisplaySleep' assertions.txt
           # ...and does it go away when the process is killed outright?
           kill -9 $pid; sleep 2
-          if pmset -g assertions | grep -q 'sleepless'; then
+          if pmset -g assertions | grep -qE 'pid [0-9]+\(sleepless\)'; then
             echo "FAIL: assertion survived SIGKILL"; exit 1
           fi
 
@@ -124,10 +128,12 @@ jobs:
           Start-Sleep -Seconds 3
           $req = powercfg /requests | Out-String
           Write-Host $req
-          if ($req -notmatch 'sleepless') { throw "FAIL: no power request registered" }
+          # Match the executable, so an unrelated request mentioning the word
+          # cannot satisfy this the way "Anka sleeplessness" did on macOS.
+          if ($req -notmatch 'sleepless\.exe') { throw "FAIL: no power request registered" }
           Stop-Process -Id $p.Id -Force
           Start-Sleep -Seconds 2
-          if ((powercfg /requests | Out-String) -match 'sleepless') {
+          if ((powercfg /requests | Out-String) -match 'sleepless\.exe') {
             throw "FAIL: power request survived the process"
           }
 

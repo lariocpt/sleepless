@@ -440,21 +440,28 @@ color = "chartreuse-ish"
 
     #[test]
     fn base_path_rules() {
-        let home = || Some(PathBuf::from("/home/u"));
+        // What counts as absolute is platform-specific: "/xdg" has no drive
+        // letter, so Windows considers it relative.
+        #[cfg(windows)]
+        let (abs, home_dir) = ("C:\\xdg", "C:\\Users\\u");
+        #[cfg(not(windows))]
+        let (abs, home_dir) = ("/xdg", "/home/u");
+        let home = || Some(PathBuf::from(home_dir));
+
         // Explicit absolute override wins.
         assert_eq!(
-            resolve_base(Some("/xdg".into()), home(), &[".config"]),
-            Some(PathBuf::from("/xdg"))
+            resolve_base(Some(abs.into()), home(), &[".config"]),
+            Some(PathBuf::from(abs))
         );
         // A relative override is treated as unset, per the XDG spec.
         assert_eq!(
             resolve_base(Some("rel/ative".into()), home(), &[".config"]),
-            Some(PathBuf::from("/home/u/.config"))
+            Some(PathBuf::from(home_dir).join(".config"))
         );
         // Multi-segment fallback, as used for the state dir.
         assert_eq!(
             resolve_base(None, home(), &[".local", "state"]),
-            Some(PathBuf::from("/home/u/.local/state"))
+            Some(PathBuf::from(home_dir).join(".local").join("state"))
         );
         // Nothing to go on: None, never the current directory.
         assert_eq!(resolve_base(None, None, &[".config"]), None);
