@@ -2,7 +2,9 @@
 name = "nosleep-tui"
 version = "0.1.0"
 edition = "2024"
-rust-version = "1.88"
+# 1.89 comes from starship-battery (macOS/Windows only); ratatui needs 1.88 and
+# is the Linux ceiling. Declared as one number because Cargo has no per-target MSRV.
+rust-version = "1.89"
 description = "Keep your computer awake while this runs in a terminal — I CAN'T GET NO SLEEP"
 license = "MIT"
 repository = "https://github.com/lariocpt/nosleep"
