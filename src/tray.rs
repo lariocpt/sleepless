@@ -39,16 +39,16 @@ impl NosleepTray {
 
 impl ksni::Tray for NosleepTray {
     fn id(&self) -> String {
-        "nosleep".into()
+        "sleepless".into()
     }
 
     fn title(&self) -> String {
         if self.active {
-            format!("nosleep — AWAKE ({})", self.mode.label())
+            format!("sleepless — AWAKE ({})", self.mode.label())
         } else if self.paused_on_battery {
-            "nosleep — PAUSED (on battery)".into()
+            "sleepless — PAUSED (on battery)".into()
         } else {
-            "nosleep — not inhibiting".into()
+            "sleepless — not inhibiting".into()
         }
     }
 
@@ -72,7 +72,7 @@ impl ksni::Tray for NosleepTray {
         ksni::ToolTip {
             title: self.title(),
             description:
-                "Left-click: toggle mode. Closing the nosleep terminal restores normal sleep."
+                "Left-click: toggle mode. Closing the sleepless terminal restores normal sleep."
                     .into(),
             ..Default::default()
         }
@@ -117,7 +117,7 @@ impl ksni::Tray for NosleepTray {
             .into(),
             MenuItem::Separator,
             StandardItem {
-                label: "Quit nosleep".into(),
+                label: "Quit sleepless".into(),
                 icon_name: "application-exit".into(),
                 activate: Box::new(|t: &mut Self| {
                     let _ = t.tx.send(TrayMsg::Quit);

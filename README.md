@@ -1,34 +1,36 @@
-# nosleep
+# sleepless
 
 > **I CAN'T GET NO SLEEP**
 
 Keeps your computer awake for exactly as long as it's running.
+
+![sleepless in action](assets/demo.gif)
 
 Every lock it takes is bound to the process itself, so closing the terminal — or
 `kill -9`-ing it, however rudely — restores normal sleep instantly. There is no daemon,
 no setting to put back, and nothing left behind to clean up.
 
 ```sh
-cargo install nosleep-tui   # the command it installs is `nosleep`
+cargo install sleepless
 ```
 
-[**Website**](https://lariocpt.github.io/nosleep/) — the source is
+[**Website**](https://lariocpt.github.io/sleepless/) — the source is
 [`docs/index.html`](docs/index.html), one self-contained file with no build step.
 
 ## Why not just use something else
 
 The usual tools change a *setting*: a power profile, a disabled timer, a background
 daemon holding a lock on your behalf. All of that outlives the program that set it, and
-all of it outlives that program crashing. nosleep has no off switch to forget, because
+all of it outlives that program crashing. sleepless has no off switch to forget, because
 the process **is** the switch.
 
 |                                  | releases cleanly on `kill -9` | needs a daemon | shows what it holds |
 | -------------------------------- | ----------------------------- | -------------- | ------------------- |
-| `nosleep`                        | yes                           | no             | yes                 |
+| `sleepless`                        | yes                           | no             | yes                 |
 | `systemd-inhibit sleep infinity` | yes                           | no             | no                  |
 | GUI caffeine-style applets       | usually leaves state behind   | yes            | no                  |
 
-`systemd-inhibit` is the honest closest comparison and it is a fine tool. nosleep is
+`systemd-inhibit` is the honest closest comparison and it is a fine tool. sleepless is
 that, with a face, a battery rule, a tray icon, and a status line that tells you when it
 *failed* to get a lock — which is the thing you actually want to know.
 
@@ -47,41 +49,41 @@ so nothing survives the process. What differs is how much is exposed.
 | Verified by            | daily use + CI                     | CI (`pmset -g assertions`)       | CI (`powercfg /requests`)      |
 
 CI builds and lints all eight targets (linux gnu/musl and macOS/Windows, x86-64 and
-arm64) on every push, and on each of the three OSes it starts nosleep, asks the platform
+arm64) on every push, and on each of the three OSes it starts sleepless, asks the platform
 whether the lock is really registered, `kill -9`s it and asserts the lock is gone.
 
 Linux is the developed path and the one that gets used every day. macOS and Windows pass
 that automated check on every commit but see far less human use — reports welcome.
 
 **Not supported:** FreeBSD and other Unixes build, but there is no inhibition backend, so
-nosleep says so and holds nothing.
+sleepless says so and holds nothing.
 
 ## How it works
 
-On Linux, two independent locks, neither of which needs nosleep to shut down politely:
+On Linux, two independent locks, neither of which needs sleepless to shut down politely:
 
 - **`org.freedesktop.ScreenSaver.Inhibit`** (session bus) returns a cookie scoped to the
   D-Bus *connection*. The process dying drops the connection, and the compositor releases
   the inhibit on its own. Implemented by GNOME, KDE, niri and most others.
 - **`org.freedesktop.login1.Manager.Inhibit("sleep:idle", …, "block")`** (system bus)
   hands back an open pipe file descriptor, and the lock lasts exactly as long as that fd
-  stays open. Closing it isn't something nosleep has to remember — the kernel closes every
+  stays open. Closing it isn't something sleepless has to remember — the kernel closes every
   fd a process owns when it dies, `SIGKILL` included.
 
-Either one may be missing and nosleep keeps whatever it can get, showing the rest as
+Either one may be missing and sleepless keeps whatever it can get, showing the rest as
 failed. If neither bus exists at all — a container, a bare TTY — it still starts and shows
 a red `✗ NOT INHIBITING` banner rather than refusing to run.
 
 Check it from another terminal while it runs:
 
 ```sh
-systemd-inhibit --list | grep nosleep
+systemd-inhibit --list | grep sleepless
 ```
 
 ## Install
 
 ```sh
-cargo install nosleep-tui     # from crates.io
+cargo install sleepless       # from crates.io
 cargo install --path .        # from a clone
 ```
 
@@ -89,20 +91,17 @@ Requires Rust 1.89 or newer. The dependency tree is pure Rust — no C toolchain
 `pkg-config`, no system libraries — so cross-compiling and static musl builds work without
 any extra setup.
 
-The crate is named `nosleep-tui` because `nosleep` was already taken on crates.io by an
-unrelated library. The binary it installs is `nosleep`.
-
 ## Usage
 
 ```sh
-nosleep                    # keep the machine awake while running
-nosleep --plugged-only     # start in plugged-only mode
-nosleep --always           # force always mode, overriding saved settings
-nosleep --inhibit-lid      # also block lid-close suspend (Linux)
-nosleep --no-tray          # no tray icon (Linux)
-nosleep --no-pulse         # no pulse animations
-nosleep --splash coffee    # start on a specific splash screen
-nosleep --why "compiling all of chromium"
+sleepless                    # keep the machine awake while running
+sleepless --plugged-only     # start in plugged-only mode
+sleepless --always           # force always mode, overriding saved settings
+sleepless --inhibit-lid      # also block lid-close suspend (Linux)
+sleepless --no-tray          # no tray icon (Linux)
+sleepless --no-pulse         # no pulse animations
+sleepless --splash coffee    # start on a specific splash screen
+sleepless --why "compiling all of chromium"
 ```
 
 Keys: **m** toggle mode · **l** toggle lid block (Linux) · **←/→** cycle splash screens ·
@@ -119,8 +118,8 @@ showing `◌ PAUSED — ON BATTERY` in between. Toggle live with **m** or from t
 
 ## Configuration
 
-Optional. Linux and macOS use `~/.config/nosleep/config.toml` (respecting
-`$XDG_CONFIG_HOME`); Windows uses `%APPDATA%\nosleep\config.toml`. Command-line flags
+Optional. Linux and macOS use `~/.config/sleepless/config.toml` (respecting
+`$XDG_CONFIG_HOME`); Windows uses `%APPDATA%\sleepless\config.toml`. Command-line flags
 always win over the file, and a broken config warns inside the TUI and is otherwise
 ignored — it can never stop the app from working.
 
@@ -151,7 +150,7 @@ art = '''
 
 [[splashes]]
 name = "dragon"
-art_file = "~/.config/nosleep/dragon.txt"   # …or loaded from a file
+art_file = "~/.config/sleepless/dragon.txt"   # …or loaded from a file
 color = "lightred"
 ```
 
@@ -161,8 +160,8 @@ automatically on narrow terminals; art that doesn't fit falls back to a one-line
 ### Settings persistence
 
 Runtime changes — the mode toggle (**m** / tray), the lid-block toggle (**l**), and the
-selected splash (**←/→**) — are saved as they happen to `~/.local/state/nosleep/state.toml`
-(respecting `$XDG_STATE_HOME`), or `%LOCALAPPDATA%\nosleep\state.toml` on Windows, and
+selected splash (**←/→**) — are saved as they happen to `~/.local/state/sleepless/state.toml`
+(respecting `$XDG_STATE_HOME`), or `%LOCALAPPDATA%\sleepless\state.toml` on Windows, and
 restored next launch.
 
 Precedence is **command-line flags > saved state > config.toml**. So `mode` and friends in
@@ -174,7 +173,7 @@ to go back to your config.toml defaults. A broken or unwritable state file is ne
 
 - **Lid close still suspends by default.** logind treats the lid as a separate channel
   (`handle-lid-switch`) that ignores normal sleep inhibitors — that's why lid-blocking is
-  an explicit opt-in. On some systems polkit refuses it; nosleep then keeps the other
+  an explicit opt-in. On some systems polkit refuses it; sleepless then keeps the other
   locks and marks lid as `✗ (refused)`.
 - **Deliberate suspends still win.** `systemctl suspend -i` and a long power-key press
   bypass block-mode inhibitors. That's by design — yours, and systemd's.
@@ -183,7 +182,7 @@ to go back to your config.toml defaults. A broken or unwritable state file is ne
 - **Windows on battery:** on Modern Standby laptops, Windows terminates power requests
   some minutes after the sleep timeout when on DC power. `--plugged-only` is the
   dependable mode there.
-- **No tray host** (bare TTY, minimal WM)? nosleep runs fine without it and notes
+- **No tray host** (bare TTY, minimal WM)? sleepless runs fine without it and notes
   `tray: unavailable` in the footer. If the bar restarts, the icon re-registers itself.
 
 ## Development
