@@ -71,7 +71,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest, windows-latest]
+        os: [ubuntu-latest, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v5
@@ -130,3 +130,20 @@ jobs:
           if ((powercfg /requests | Out-String) -match 'sleepless') {
             throw "FAIL: power request survived the process"
           }
+
+  # Native arm64. GitHub's arm runners are free for public repositories and
+  # unavailable on a private one, so this job sits out until the repo is public.
+  test-arm:
+    name: test ${{ matrix.os }}
+    if: ${{ github.event.repository.private == false }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04-arm, windows-11-arm]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test --locked
+      - run: cargo build --locked
