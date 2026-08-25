@@ -1,5 +1,5 @@
 [package]
-name = "nosleep-tui"
+name = "sleepless"
 version = "0.1.0"
 edition = "2024"
 # 1.89 comes from starship-battery (macOS/Windows only); ratatui needs 1.88 and
@@ -7,18 +7,12 @@ edition = "2024"
 rust-version = "1.89"
 description = "Keep your computer awake while this runs in a terminal — I CAN'T GET NO SLEEP"
 license = "MIT"
-repository = "https://github.com/lariocpt/nosleep"
-homepage = "https://github.com/lariocpt/nosleep"
+repository = "https://github.com/lariocpt/sleepless"
+homepage = "https://github.com/lariocpt/sleepless"
 readme = "README.md"
 keywords = ["tui", "sleep", "caffeine", "power", "terminal"]
 categories = ["command-line-utilities"]
-exclude = ["/.github", "/.claude", "/CLAUDE.md"]
-
-# The crate is `nosleep-tui` because `nosleep` was already taken on crates.io by an
-# unrelated library. The command is what users type, so it stays `nosleep`.
-[[bin]]
-name = "nosleep"
-path = "src/main.rs"
+exclude = ["/.github", "/.claude", "/CLAUDE.md", "/assets", "/docs"]
 
 [dependencies]
 ratatui = "0.30"

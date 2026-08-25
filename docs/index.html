@@ -3,11 +3,11 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>nosleep</title>
-<meta name="description" content="nosleep keeps your computer awake for exactly as long as it runs. Every lock is bound to the process, so closing the terminal restores normal sleep instantly.">
+<title>sleepless</title>
+<meta name="description" content="sleepless keeps your computer awake for exactly as long as it runs. Every lock is bound to the process, so closing the terminal restores normal sleep instantly.">
 <meta name="color-scheme" content="light dark">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%2322c55e'/%3E%3Cellipse cx='16' cy='16' rx='11.5' ry='7' fill='%23fff'/%3E%3Ccircle cx='16' cy='16' r='4' fill='%23080808'/%3E%3C/svg%3E">
-<meta property="og:title" content="nosleep">
+<meta property="og:title" content="sleepless">
 <meta property="og:description" content="A terminal keep-awake tool whose locks die with the process.">
 <meta property="og:type" content="website">
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -174,6 +174,13 @@ kbd {
   border-radius: 3px; padding: 1px 6px; color: var(--text);
 }
 
+.shot { margin: 4px 0 8px; display: flex; flex-direction: column; gap: 10px; }
+.shot img {
+  width: 100%; height: auto; border: 1px solid var(--line);
+  border-radius: 4px; background: #0d110f;
+}
+.shot figcaption { color: var(--muted); font-size: .88rem; max-width: 62ch; }
+
 /* ---------- the kill demo ---------- */
 
 .demo {
@@ -273,7 +280,7 @@ footer a:hover { color: var(--awake); }
         There is no daemon, no config to undo, and nothing left behind to clean up.
       </p>
       <div class="cmd" style="max-width:min(100%,460px); margin-top:4px;">
-        <span class="sigil">$</span>cargo install nosleep-tui
+        <span class="sigil">$</span>cargo install sleepless
       </div>
     </div>
   </header>
@@ -295,7 +302,7 @@ footer a:hover { color: var(--awake); }
         program that set it &mdash; and all of it survives that program crashing.
       </p>
       <p>
-        <strong>nosleep has no off switch to forget, because the process <em>is</em> the
+        <strong>sleepless has no off switch to forget, because the process <em>is</em> the
         switch.</strong> While it runs, you are awake. The moment it stops, for any reason,
         you are not.
       </p>
@@ -307,15 +314,24 @@ footer a:hover { color: var(--awake); }
     <span class="eyebrow">How it works</span>
     <h2>The kernel is what releases the lock, not the program.</h2>
     <p class="prose sub">
-      On Linux, nosleep holds two independent locks, and neither one requires it to shut down
+      On Linux, sleepless holds two independent locks, and neither one requires it to shut down
       politely. Try killing it &mdash; the hard way, with no chance to run cleanup code &mdash;
       and watch what each side does.
     </p>
 
+    <figure class="shot">
+      <img src="demo.gif" alt="sleepless running in a terminal: the block-letter splash in green, cycling through splash screens, pausing on battery, then quitting -- after which systemd-inhibit --list shows no lock at all"
+           width="880" height="617" loading="lazy" decoding="async">
+      <figcaption>
+        Launch, cycle the splashes, switch to plugged-only on battery, quit. The last
+        command asks logind what is still held: nothing.
+      </figcaption>
+    </figure>
+
     <div class="demo" style="margin-top:8px;">
       <div class="pane">
         <div class="pane-head">
-          <h3>nosleep</h3>
+          <h3>sleepless</h3>
           <span class="state on" id="ns-pid">pid 4127 &middot; running</span>
         </div>
         <div class="rows" id="ns-rows"></div>
@@ -352,7 +368,7 @@ footer a:hover { color: var(--awake); }
         <h3>logind sleep:idle</h3>
         <p>
           logind hands back an open pipe file descriptor and holds the lock for exactly as long
-          as that fd stays open. Closing it is not something nosleep has to remember to do &mdash;
+          as that fd stays open. Closing it is not something sleepless has to remember to do &mdash;
           the kernel closes every fd a process owns when it dies, <code>SIGKILL</code> included.
         </p>
       </div>
@@ -361,7 +377,7 @@ footer a:hover { color: var(--awake); }
     <p class="footnote prose" style="margin-top:6px;">
       That is the whole design, and it is why there is no <code>--stop</code> flag, no PID file
       and no state directory to get out of sync. Verify it yourself while it runs:
-      <code>systemd-inhibit --list | grep nosleep</code>.
+      <code>systemd-inhibit --list | grep sleepless</code>.
     </p>
   </section>
 
@@ -416,7 +432,7 @@ footer a:hover { color: var(--awake); }
         <h3>Lid&#8209;close blocking</h3>
         <p>
           logind treats the lid as a separate channel that ignores ordinary sleep inhibitors, so
-          blocking it is deliberate rather than a surprise. If polkit refuses, nosleep keeps the
+          blocking it is deliberate rather than a surprise. If polkit refuses, sleepless keeps the
           other locks and marks lid as refused instead of failing.
         </p>
       </div>
@@ -512,10 +528,10 @@ footer a:hover { color: var(--awake); }
     <div class="grid2" style="margin-top:8px; gap:24px 36px;">
       <div class="stack-s">
         <span class="k feat" style="color:var(--muted); font-family:var(--mono); font-size:.68rem; font-weight:700; letter-spacing:.12em; text-transform:uppercase;">From crates.io</span>
-        <div class="cmd"><span class="sigil">$</span>cargo install nosleep-tui</div>
+        <div class="cmd"><span class="sigil">$</span>cargo install sleepless</div>
         <p class="footnote">
-          The crate is <code>nosleep-tui</code> because <code>nosleep</code> was already taken on
-          crates.io by an unrelated library. The command it installs is <code>nosleep</code>.
+          Installs a single binary called <code>sleepless</code>. No runtime, no daemon,
+          nothing else to set up.
         </p>
       </div>
       <div class="stack-s">
@@ -530,10 +546,10 @@ footer a:hover { color: var(--awake); }
 
     <div class="stack-s" style="margin-top:20px;">
       <span class="eyebrow">Then</span>
-      <pre class="block">nosleep                    <span style="color:var(--muted)"># stay awake while this runs</span>
-nosleep --plugged-only     <span style="color:var(--muted)"># ...but not on battery</span>
-nosleep --inhibit-lid      <span style="color:var(--muted)"># also block lid-close suspend (Linux)</span>
-nosleep --why "rendering"  <span style="color:var(--muted)"># reason shown in systemd-inhibit --list</span></pre>
+      <pre class="block">sleepless                    <span style="color:var(--muted)"># stay awake while this runs</span>
+sleepless --plugged-only     <span style="color:var(--muted)"># ...but not on battery</span>
+sleepless --inhibit-lid      <span style="color:var(--muted)"># also block lid-close suspend (Linux)</span>
+sleepless --why "rendering"  <span style="color:var(--muted)"># reason shown in systemd-inhibit --list</span></pre>
       <p class="footnote">
         Keys: <kbd>m</kbd> mode &middot; <kbd>l</kbd> lid block &middot;
         <kbd>&larr;</kbd>&thinsp;<kbd>&rarr;</kbd> splash &middot; <kbd>q</kbd> quit.
@@ -544,8 +560,8 @@ nosleep --why "rendering"  <span style="color:var(--muted)"># reason shown in sy
 
   <footer>
     <p>
-      nosleep &mdash; MIT licensed.
-      <a href="https://github.com/lariocpt/nosleep">github.com/lariocpt/nosleep</a>
+      sleepless &mdash; MIT licensed.
+      <a href="https://github.com/lariocpt/sleepless">github.com/lariocpt/sleepless</a>
     </p>
     <p style="margin-top:6px; opacity:.75;">The splash above is rendered with the app's own block font.</p>
   </footer>

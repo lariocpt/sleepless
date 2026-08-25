@@ -89,7 +89,7 @@ mod imp {
 
     pub const CAPS: Caps = Caps {
         lid: true,
-        mechanism: "D-Bus (ScreenSaver + logind)",
+        mechanism: "D-Bus",
     };
 
     const SCREENSAVER: (&str, &str, &str) = (
@@ -171,7 +171,7 @@ mod imp {
             SCREENSAVER.1,
             Some(SCREENSAVER.2),
             "Inhibit",
-            &("nosleep", why),
+            &("sleepless", why),
         )?;
         reply.body().deserialize::<u32>()
     }
@@ -182,7 +182,7 @@ mod imp {
             "/org/freedesktop/login1",
             Some("org.freedesktop.login1.Manager"),
             "Inhibit",
-            &(what, "nosleep", why, "block"),
+            &(what, "sleepless", why, "block"),
         )?;
         let fd: zbus::zvariant::OwnedFd = reply.body().deserialize()?;
         Ok(fd.into())
@@ -290,7 +290,7 @@ mod imp {
         #[cfg(target_os = "macos")]
         mechanism: "IOPMAssertion",
         #[cfg(target_os = "windows")]
-        mechanism: "SetThreadExecutionState",
+        mechanism: "ExecutionState",
     };
 
     const WANT_SYSTEM_SLEEP_ASSERTION: bool = cfg!(target_os = "macos");
@@ -320,8 +320,8 @@ mod imp {
             .idle(true)
             .sleep(WANT_SYSTEM_SLEEP_ASSERTION)
             .reason(why)
-            .app_name("nosleep")
-            .app_reverse_domain("dev.lario.nosleep")
+            .app_name("sleepless")
+            .app_reverse_domain("dev.lario.sleepless")
             .create()?;
 
         // Only claim what we actually asked for and got. `create()` fails as a

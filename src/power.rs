@@ -1,5 +1,11 @@
 //! Power-source detection.
 //!
+//! No emoji in the rendered strings, deliberately. `🔋` (U+1F50B) needs a colour
+//! emoji font that minimal systems and bare TTYs do not have, and both it and `⚡`
+//! carry emoji presentation, so terminals draw them two cells wide while the
+//! layout math in `art.rs` counts them as one and the centring drifts. The words
+//! already say what the icons said.
+//!
 //! Linux reads sysfs directly: any `type == Mains` supply that is `online`
 //! means we're on AC. Battery percentage/status are display-only — charge-limit
 //! firmware reports states like "Not charging" that must never be interpreted
@@ -45,10 +51,10 @@ impl PowerStatus {
             None => format!("battery {p}%"),
         });
         match (self.on_ac, batt) {
-            (true, Some(b)) => format!("⚡ AC — {b}"),
-            (true, None) => "⚡ AC".into(),
-            (false, Some(b)) => format!("🔋 {b}"),
-            (false, None) => "🔋 on battery".into(),
+            (true, Some(b)) => format!("AC — {b}"),
+            (true, None) => "AC".into(),
+            (false, Some(b)) => b,
+            (false, None) => "on battery".into(),
         }
     }
 }

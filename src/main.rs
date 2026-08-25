@@ -18,9 +18,9 @@ use std::time::{Duration, Instant};
 /// Keep your computer awake while this runs. Close the terminal to stop.
 ///
 /// Options not given on the command line fall back to
-/// ~/.config/nosleep/config.toml, then to built-in defaults.
+/// ~/.config/sleepless/config.toml, then to built-in defaults.
 #[derive(Parser, Debug)]
-#[command(name = "nosleep", version, about)]
+#[command(name = "sleepless", version, about)]
 struct Args {
     /// Only keep awake while on AC power (toggle at runtime with 'm')
     #[arg(long)]
@@ -333,7 +333,7 @@ fn print_state(app: &App) {
     } else {
         "PAUSED (on battery)".into()
     };
-    println!("nosleep - {state} | {}", app.power.describe_ascii());
+    println!("sleepless - {state} | {}", app.power.describe_ascii());
     if let Some(g) = &app.guard {
         println!("  holding: {}", g.status().describe_ascii());
         for note in &g.status().notes {

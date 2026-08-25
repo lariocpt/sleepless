@@ -1,5 +1,5 @@
-//! Config file: `$XDG_CONFIG_HOME/nosleep/config.toml` (usually
-//! `~/.config/nosleep/config.toml`).
+//! Config file: `$XDG_CONFIG_HOME/sleepless/config.toml` (usually
+//! `~/.config/sleepless/config.toml`).
 //!
 //! Everything is optional and CLI flags win over the file. Broken entries are
 //! skipped with a warning shown in the TUI, never fatal — a bad config must
@@ -44,7 +44,7 @@ pub struct Loaded {
 }
 
 /// Runtime changes (mode/lid toggles, chosen splash), saved as they happen and
-/// restored on the next launch. Kept in `$XDG_STATE_HOME/nosleep/state.toml`
+/// restored on the next launch. Kept in `$XDG_STATE_HOME/sleepless/state.toml`
 /// (usually `~/.local/state/...`), separate from the hand-edited config.toml,
 /// which is never rewritten. Precedence: CLI flags > state > config.toml.
 #[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -62,7 +62,7 @@ pub struct State {
 ///
 /// Returns `None` when there is nowhere sensible to write. It must never fall
 /// back to the current directory: on Windows `$HOME` is normally unset, and the
-/// old fallback silently scattered `nosleep/state.toml` into whatever directory
+/// old fallback silently scattered `sleepless/state.toml` into whatever directory
 /// the user happened to launch from.
 pub fn state_path() -> Option<PathBuf> {
     #[cfg(windows)]
@@ -77,7 +77,7 @@ pub fn state_path() -> Option<PathBuf> {
         home_dir(),
         &[".local", "state"],
     );
-    Some(base?.join("nosleep").join("state.toml"))
+    Some(base?.join("sleepless").join("state.toml"))
 }
 
 /// Pure part of the path rules, so they can be tested without mutating the
@@ -149,7 +149,7 @@ pub fn config_path() -> Option<PathBuf> {
         home_dir(),
         &[".config"],
     );
-    Some(base?.join("nosleep").join("config.toml"))
+    Some(base?.join("sleepless").join("config.toml"))
 }
 
 pub fn load() -> Loaded {
@@ -465,11 +465,11 @@ color = "chartreuse-ish"
         // Whatever the platform resolves to, the tail must be stable.
         if let Some(p) = config_path() {
             assert!(p.is_absolute(), "{p:?} should be absolute");
-            assert!(p.ends_with("nosleep/config.toml"), "{p:?}");
+            assert!(p.ends_with("sleepless/config.toml"), "{p:?}");
         }
         if let Some(p) = state_path() {
             assert!(p.is_absolute(), "{p:?} should be absolute");
-            assert!(p.ends_with("nosleep/state.toml"), "{p:?}");
+            assert!(p.ends_with("sleepless/state.toml"), "{p:?}");
         }
     }
 

@@ -90,12 +90,12 @@ jobs:
           # ScreenSaver call has no provider. That is a supported degradation and
           # must still exit 0 -- this is the regression test for the startup path
           # that used to refuse to run without D-Bus.
-          ./target/debug/nosleep --always --smoke 2 | tee out.txt
-          grep -q 'nosleep - ' out.txt
+          ./target/debug/sleepless --always --smoke 2 | tee out.txt
+          grep -q 'sleepless - ' out.txt
           # And with no buses at all, the way a container sees the world.
           env DBUS_SESSION_BUS_ADDRESS=unix:path=/nonexistent \
               DBUS_SYSTEM_BUS_ADDRESS=unix:path=/nonexistent \
-              ./target/debug/nosleep --always --smoke 1 | tee bare.txt
+              ./target/debug/sleepless --always --smoke 1 | tee bare.txt
           grep -q 'NOT INHIBITING' bare.txt
           # Output feeds greps like these, so it must stay ASCII.
           ! LC_ALL=C grep -qP '[^\x00-\x7F]' out.txt
@@ -104,7 +104,7 @@ jobs:
         if: runner.os == 'macOS'
         run: |
           set -eux
-          ./target/debug/nosleep --always --smoke 8 &
+          ./target/debug/sleepless --always --smoke 8 &
           pid=$!
           sleep 3
           # The real assertion: does powerd think someone is holding one?
@@ -112,7 +112,7 @@ jobs:
           grep -q 'PreventUserIdleSystemSleep' assertions.txt
           # ...and does it go away when the process is killed outright?
           kill -9 $pid; sleep 2
-          if pmset -g assertions | grep -q 'nosleep'; then
+          if pmset -g assertions | grep -q 'sleepless'; then
             echo "FAIL: assertion survived SIGKILL"; exit 1
           fi
 
@@ -120,13 +120,13 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          $p = Start-Process -PassThru -NoNewWindow .\target\debug\nosleep.exe '--always','--smoke','8'
+          $p = Start-Process -PassThru -NoNewWindow .\target\debug\sleepless.exe '--always','--smoke','8'
           Start-Sleep -Seconds 3
           $req = powercfg /requests | Out-String
           Write-Host $req
-          if ($req -notmatch 'nosleep') { throw "FAIL: no power request registered" }
+          if ($req -notmatch 'sleepless') { throw "FAIL: no power request registered" }
           Stop-Process -Id $p.Id -Force
           Start-Sleep -Seconds 2
-          if ((powercfg /requests | Out-String) -match 'nosleep') {
+          if ((powercfg /requests | Out-String) -match 'sleepless') {
             throw "FAIL: power request survived the process"
           }
