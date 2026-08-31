@@ -198,7 +198,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          test/smoke.sh target/debug/sleepless
+          test/smoke.sh target/debug/sleepless | tee smoke.log
+          # The verdict, not just the exit status: a script that returns early before
+          # its own last line still exits 0, and a skipped layer must not look like a
+          # completed run.
+          grep -qx 'smoke: ok' smoke.log \
+            || { echo "::error::the smoke script did not reach its verdict"; exit 1; }
 
       - name: Platform smoke test
         if: runner.os == 'Windows'

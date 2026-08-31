@@ -73,36 +73,38 @@ Linux)
     assert_ascii "$WORK/bare.txt"
     say "with no bus: honest, ASCII, and exit 0"
 
+    # if/elif/else rather than early exits: a skipped layer must still fall through
+    # to the final verdict below. Exiting 0 from in here meant the script's last line
+    # was a SKIP note, so anything reading its output could not tell "skipped, and
+    # fine" from "died quietly" -- which is the shape of bug this file exists to catch
+    # in the program it tests.
     if ! command -v systemd-inhibit >/dev/null 2>&1; then
         say "SKIP: systemd-inhibit is not installed, cannot ask logind"
-        exit 0
-    fi
-    if ! grep -q 'sleep=yes' "$WORK/out.txt"; then
+    elif ! grep -q 'sleep=yes' "$WORK/out.txt"; then
         say "SKIP: this host granted no logind lock, so there is nothing to ask about"
-        exit 0
-    fi
+    else
+        # Ask logind, not ourselves.
+        run_bg "$BIN" --always --why 'ci smoke' --smoke 20 > "$WORK/held.txt" &
+        pid=$!
+        sleep 3
+        systemd-inhibit --list > "$WORK/list.txt" 2>&1 || true
+        if ! grep -q 'sleepless' "$WORK/list.txt"; then
+            echo "FAIL: logind does not list our inhibitor"; cat "$WORK/list.txt"
+            kill -9 "$pid" 2>/dev/null || true; exit 1
+        fi
+        say "logind lists the inhibitor"
 
-    # Ask logind, not ourselves.
-    run_bg "$BIN" --always --why 'ci smoke' --smoke 20 > "$WORK/held.txt" &
-    pid=$!
-    sleep 3
-    systemd-inhibit --list > "$WORK/list.txt" 2>&1 || true
-    if ! grep -q 'sleepless' "$WORK/list.txt"; then
-        echo "FAIL: logind does not list our inhibitor"; cat "$WORK/list.txt"
-        kill -9 "$pid" 2>/dev/null || true; exit 1
+        # ...and the whole point: killing it outright releases the lock, with no
+        # chance for any cleanup code to run.
+        kill -9 "$pid" 2>/dev/null || true
+        wait "$pid" 2>/dev/null || true
+        sleep 2
+        systemd-inhibit --list > "$WORK/after.txt" 2>&1 || true
+        if grep -q 'sleepless' "$WORK/after.txt"; then
+            echo "FAIL: the inhibitor survived SIGKILL"; cat "$WORK/after.txt"; exit 1
+        fi
+        say "and it is gone after kill -9"
     fi
-    say "logind lists the inhibitor"
-
-    # ...and the whole point: killing it outright releases the lock, with no
-    # chance for any cleanup code to run.
-    kill -9 "$pid" 2>/dev/null || true
-    wait "$pid" 2>/dev/null || true
-    sleep 2
-    systemd-inhibit --list > "$WORK/after.txt" 2>&1 || true
-    if grep -q 'sleepless' "$WORK/after.txt"; then
-        echo "FAIL: the inhibitor survived SIGKILL"; cat "$WORK/after.txt"; exit 1
-    fi
-    say "and it is gone after kill -9"
     ;;
 Darwin)
     run_bg "$BIN" --always --smoke 20 > "$WORK/held.txt" &
