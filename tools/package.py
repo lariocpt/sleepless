@@ -18,6 +18,7 @@ of bug that shipped a hollow artifact in another project on this estate.
 """
 
 import argparse
+import datetime
 import gzip
 import hashlib
 import io
@@ -120,17 +121,23 @@ def build(target: str, tool: str) -> Path:
     return out
 
 
-# link.exe /Brepro writes this in place of every timestamp it would otherwise take
-# from the clock.
-BREPRO_STAMP = 0xFFFFFFFF
+# Any Unix time in this window is a real clock reading rather than a hash: nothing
+# reproducible would land there by design, and a build cannot predate the project.
+CLOCK_WINDOW = (1577836800, 4102444800)  # 2020-01-01 .. 2100-01-01
 
 
 def verify_deterministic(binary: Path, target: str) -> None:
-    """Refuse to package a binary that carries the time it was built.
+    """Refuse to package a Windows binary that carries the time it was built.
 
     A silent regression here is the worst kind: the archive still builds, still
     installs, still runs, and only the reproducibility claim quietly stops being
     true -- which nobody notices until someone tries to check a checksum.
+
+    `/Brepro` does not write a constant. link.exe replaces the timestamp with a hash
+    of the output, so the test is that the value cannot be a clock reading, not that
+    it equals any particular number. The authority on reproducibility is still the
+    release workflow's rebuild-and-compare; this is the cheap check that runs first
+    and names the cause.
     """
     if not target.endswith("-pc-windows-msvc"):
         return
@@ -139,13 +146,14 @@ def verify_deterministic(binary: Path, target: str) -> None:
     if data[pe : pe + 4] != b"PE\0\0":
         die(f"{binary} does not look like a PE image")
     stamp = struct.unpack_from("<I", data, pe + 8)[0]
-    if stamp != BREPRO_STAMP:
+    if CLOCK_WINDOW[0] <= stamp <= CLOCK_WINDOW[1]:
+        when = datetime.datetime.fromtimestamp(stamp, datetime.UTC)
         die(
-            f"{binary.name} has PE TimeDateStamp {stamp} (0x{stamp:08x}), not the "
-            f"0x{BREPRO_STAMP:08x} that /Brepro writes -- the build embedded its own "
-            f"clock, so this archive would not reproduce"
+            f"{binary.name} has PE TimeDateStamp {stamp} (0x{stamp:08x}), which reads "
+            f"as {when:%Y-%m-%d %H:%M:%SZ} -- the linker stamped it with the clock, so "
+            f"this archive would not reproduce. Did /Brepro stop being passed?"
         )
-    print(f"package.py: {binary.name} carries no build timestamp")
+    print(f"package.py: {binary.name} carries no build timestamp (0x{stamp:08x})")
 
 
 def members(binary: Path) -> "list[tuple[str, Path, int]]":
@@ -188,7 +196,58 @@ def write_zip(dest: Path, items) -> None:
             z.writestr(info, path.read_bytes())
 
 
+def self_test() -> int:
+    """Exercise verify_deterministic without needing a Windows build.
+
+    /Brepro's replacement value is a hash, so the rule here is "this cannot be a
+    clock reading" rather than any particular constant -- which is a rule worth
+    testing, because getting it wrong in either direction is silent: too strict and
+    every Windows release fails, too loose and the check stops meaning anything.
+    """
+    import tempfile
+
+    def fake_pe(stamp: int) -> Path:
+        data = bytearray(512)
+        data[0x3C:0x40] = struct.pack("<I", 0x80)
+        data[0x80:0x84] = b"PE\0\0"
+        data[0x88:0x8C] = struct.pack("<I", stamp)
+        p = Path(tempfile.mkstemp(suffix=".exe")[1])
+        p.write_bytes(bytes(data))
+        return p
+
+    cases = [
+        (0x2A7E0E6F, True, "the hash link.exe /Brepro actually wrote"),
+        (0xFFFFFFFF, True, "the constant some linkers write instead"),
+        (1788202353, False, "a real clock reading, from an unfixed build"),
+        (CLOCK_WINDOW[0], False, "the near edge of the clock window"),
+        (CLOCK_WINDOW[1], False, "the far edge of the clock window"),
+    ]
+    failures = 0
+    for stamp, want_ok, why in cases:
+        exe = fake_pe(stamp)
+        try:
+            verify_deterministic(exe, "x86_64-pc-windows-msvc")
+            got_ok = True
+        except SystemExit:
+            got_ok = False
+        finally:
+            exe.unlink()
+        if got_ok != want_ok:
+            print(f"  FAIL 0x{stamp:08x} ({why}): expected ok={want_ok}", file=sys.stderr)
+            failures += 1
+    # And a non-Windows target is not inspected at all.
+    exe = fake_pe(1788202353)
+    verify_deterministic(exe, "x86_64-unknown-linux-musl")
+    exe.unlink()
+    if failures:
+        return 1
+    print("package.py: self-test ok")
+    return 0
+
+
 def main() -> int:
+    if "--self-test" in sys.argv[1:]:
+        return self_test()
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--target", required=True)
     ap.add_argument("--tag", help="release tag; defaults to v<Cargo.toml version>")
@@ -200,6 +259,11 @@ def main() -> int:
         help="archive an existing target/<target>/release build",
     )
     ap.add_argument("--no-check-toolchain", action="store_true")
+    ap.add_argument(
+        "--self-test",
+        action="store_true",
+        help="check the reproducibility guards and exit; CI runs this",
+    )
     args = ap.parse_args()
 
     tag = args.tag or f"v{cargo_version()}"
@@ -250,6 +314,6 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    if shutil.which("rustc") is None and "--skip-build" not in sys.argv:
+    if shutil.which("rustc") is None and not {"--skip-build", "--self-test"} & set(sys.argv):
         die("rustc is not on PATH")
     raise SystemExit(main())

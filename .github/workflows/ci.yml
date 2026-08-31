@@ -52,11 +52,15 @@ jobs:
             shellcheck -s bash "$f"
           done
 
-      - name: Python tools compile
+      - name: Python tools compile, and their guards work
         shell: bash
         run: |
           set -euo pipefail
           python3 -m compileall -q tools
+          # The Windows reproducibility guard, exercised without a Windows build:
+          # getting its rule wrong is silent in both directions -- too strict and
+          # every Windows release fails, too loose and it stops meaning anything.
+          tools/package.py --self-test
 
       # actionlint also shellchecks the embedded `run:` blocks, which is where the
       # bugs in this repo's workflows actually lived. Pinned, not `latest`: a linter
