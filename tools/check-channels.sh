@@ -34,7 +34,21 @@ case "$want" in
     *) echo "not a version: '$want'" >&2; exit 2 ;;
 esac
 
-echo "every channel should serve sleepless $want"
+README=${README:-$(dirname "$0")/../README.md}
+
+# What the README's Install block actually tells people to run.
+#
+# Scoped to that one fenced block rather than the whole file, because the prose around
+# it discusses channels that are deliberately NOT offered -- the AUR package is written
+# and ready but cannot be registered -- and a check that could not tell an offer from an
+# explanation would re-arm itself on its own footnote. Deleting a line from that block
+# is therefore how you retire a channel, and restoring it is how you re-arm this.
+advertised() {  # <grep pattern>
+    awk '/^## Install/ {f=1} f && /^```/ {c++; next} f && c==1 {print} c>1 {exit}' "$README" \
+        | grep -q "$1"
+}
+
+echo "every advertised channel should serve sleepless $want"
 fail=0
 report() {  # <channel> <got> [note]
     if [ "$2" = "$want" ]; then
@@ -47,26 +61,41 @@ report() {  # <channel> <got> [note]
         fail=1
     fi
 }
+skip() {  # <channel> <why>
+    printf '  --      %-16s %s\n' "$1" "$2"
+}
 
 # --- GitHub Releases --------------------------------------------------------
 tag=$(curl -fsS -o /dev/null -w '%{url_effective}' -L "https://github.com/$REPO/releases/latest" || true)
 report "github" "${tag##*/v}"
 
 # --- crates.io --------------------------------------------------------------
-v=$(curl -fsS -H "$UA" "https://crates.io/api/v1/crates/sleepless" 2>/dev/null \
-    | sed -n 's/.*"max_stable_version":"\([^"]*\)".*/\1/p' || true)
-report "crates.io" "$v"
+if advertised 'cargo install sleepless'; then
+    v=$(curl -fsS -H "$UA" "https://crates.io/api/v1/crates/sleepless" 2>/dev/null \
+        | sed -n 's/.*"max_stable_version":"\([^"]*\)".*/\1/p' || true)
+    report "crates.io" "$v"
+else
+    skip "crates.io" "not advertised in the README's Install block"
+fi
 
 # --- Homebrew tap -----------------------------------------------------------
-v=$(curl -fsS "$TAP_RAW" 2>/dev/null | sed -n 's/^[[:space:]]*version[[:space:]]*"\([^"]*\)".*/\1/p' | head -1 || true)
-report "homebrew" "$v" "the tap has no formula (is the repo public?)"
+if advertised 'brew install lariocpt/sleepless'; then
+    v=$(curl -fsS "$TAP_RAW" 2>/dev/null | sed -n 's/^[[:space:]]*version[[:space:]]*"\([^"]*\)".*/\1/p' | head -1 || true)
+    report "homebrew" "$v" "the tap has no formula (is the repo public?)"
+else
+    skip "homebrew" "not advertised in the README's Install block"
+fi
 
 # --- AUR --------------------------------------------------------------------
 # The RPC returns resultcount 0 for a package that was never pushed, which is
 # indistinguishable from a typo until you look -- so say which it is.
-body=$(curl -fsS -H "$UA" "https://aur.archlinux.org/rpc/v5/info?arg\[\]=$AUR_PKG" 2>/dev/null || true)
-v=$(printf '%s' "$body" | sed -n 's/.*"Version":"\([^"-]*\).*/\1/p' | head -1)
-report "aur" "$v" "$AUR_PKG is not on the AUR (committed but never pushed?)"
+if advertised "$AUR_PKG"; then
+    body=$(curl -fsS -H "$UA" "https://aur.archlinux.org/rpc/v5/info?arg\[\]=$AUR_PKG" 2>/dev/null || true)
+    v=$(printf '%s' "$body" | sed -n 's/.*"Version":"\([^"-]*\).*/\1/p' | head -1)
+    report "aur" "$v" "$AUR_PKG is not on the AUR (committed but never pushed?)"
+else
+    skip "aur" "not advertised (AUR registrations are closed; the package is ready)"
+fi
 
 # --- LAN apps plane ---------------------------------------------------------
 if curl -fsS -m 8 -o /dev/null "$PLANE/index.tsv" 2>/dev/null; then

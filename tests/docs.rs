@@ -92,6 +92,16 @@ fn site_command_lines() -> Vec<String> {
         out.push(rest[..j].to_string());
         rest = &rest[j..];
     }
+    // The install panels are `<div class="cmd">$cargo install ...</div>`: not <code>,
+    // and not a line beginning with `sleepless`, so neither rule above sees them.
+    let mut rest = html.as_str();
+    while let Some(i) = rest.find(r#"<div class="cmd">"#) {
+        rest = &rest[i..];
+        let Some(j) = rest.find("</div>") else { break };
+        let cmd = strip_tags(&rest[..j]);
+        out.push(cmd.trim().trim_start_matches('$').trim().to_string());
+        rest = &rest[j..];
+    }
     for line in html.lines() {
         let t = strip_tags(line);
         let t = t.trim();
@@ -458,22 +468,35 @@ fn the_readme_names_the_checksum_files_that_actually_exist() {
 
 #[test]
 fn the_install_methods_are_the_same_on_both_pages() {
-    // The README grew Homebrew and prebuilt binaries; the site was never updated,
-    // so the two pages advertised different products.
-    let (readme, site) = (readme(), site());
+    // "Offered" means a command the page tells you to run, not a mention. The README's
+    // prose discusses the AUR package -- written, ready, and unpublishable while AUR
+    // registrations are closed -- and a check that could not tell an offer from an
+    // explanation would demand the website advertise something nobody can install.
+    // tools/check-channels.sh scopes itself to the same block for the same reason.
+    let readme = readme();
+    let offers = readme
+        .split("## Install")
+        .nth(1)
+        .and_then(|s| s.split("```sh").nth(1))
+        .and_then(|s| s.split("```").next())
+        .expect("README has an Install block");
+    let site = site();
+    let site_offers: String = site_command_lines().join("\n");
+
     for method in [
         "cargo install sleepless",
         "brew install lariocpt/sleepless/sleepless",
+        "cargo install --path .",
         "sleepless-bin",
-        "https://github.com/lariocpt/sleepless/releases",
     ] {
-        assert!(
-            readme.contains(method),
-            "README omits the {method:?} install path"
-        );
-        assert!(
-            site.contains(method),
-            "docs/index.html omits the {method:?} install path"
+        assert_eq!(
+            offers.contains(method),
+            site_offers.contains(method),
+            "{method:?} is offered on one page and not the other"
         );
     }
+    // The releases page is a link rather than a command, so it is checked as prose.
+    let releases = "https://github.com/lariocpt/sleepless/releases";
+    assert!(readme.contains(releases), "README omits the releases page");
+    assert!(site.contains(releases), "the site omits the releases page");
 }

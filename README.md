@@ -85,9 +85,15 @@ systemd-inhibit --list | grep sleepless
 ```sh
 cargo install sleepless                      # crates.io
 brew install lariocpt/sleepless/sleepless    # macOS / Linuxbrew
-paru -S sleepless-bin                        # Arch Linux (AUR)
 cargo install --path .                       # from a clone
 ```
+
+An Arch package (`sleepless-bin`, the prebuilt musl binary with its checksum pinned)
+is written and ready in `aur-sleepless-bin`, but the AUR is not currently accepting new
+package registrations, so it is deliberately not advertised above: a documented way in
+that nobody can walk is worse than one method fewer. `tools/check-channels.sh` reads
+this list to decide what to require, so restoring the line here is what re-arms the
+check.
 
 Or grab a prebuilt binary from [Releases](https://github.com/lariocpt/sleepless/releases) —
 eight targets, each with a `.sha256` beside it that `sha256sum -c` reads directly:
