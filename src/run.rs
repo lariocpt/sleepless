@@ -272,15 +272,20 @@ pub fn plain(app: &mut App, buses: &Buses, limit: Duration) -> Result<()> {
 /// piped through a `grep` in a CI script and a Windows console code page, so every
 /// interpolated string goes through [`crate::ascii::squash`] first.
 pub fn print_state(app: &App) {
+    // The mode is its own field rather than a parenthesis after AWAKE, because it is
+    // exactly as interesting when nothing is held: a run that reports NOT INHIBITING
+    // used to say nothing at all about which mode produced it, which made the state
+    // unreadable on any machine where the locks are refused.
     let state = if app.active() {
-        format!("AWAKE ({})", app.mode.label())
+        "AWAKE"
     } else if app.inhibit_err.is_some() {
-        "NOT INHIBITING (error)".into()
+        "NOT INHIBITING (error)"
     } else {
-        "PAUSED (on battery)".into()
+        "PAUSED (on battery)"
     };
     println!(
-        "sleepless - {state} | {}",
+        "sleepless - {state} | mode={} | {}",
+        app.mode.label(),
         crate::ascii::squash(&app.power.describe_ascii())
     );
     if let Some(g) = &app.guard {

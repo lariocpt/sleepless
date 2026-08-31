@@ -75,8 +75,10 @@ working; all of it is about the cases where it said one thing and did another.
   ran `cargo test` and nothing else while the website claimed CI verified the lock
   there. The smoke probes moved into `test/smoke.sh` and `test/smoke.ps1`, real files
   that shellcheck sees and anyone can run, and every runner now executes one. Linux
-  gained a probe it never had: it asks logind whether the inhibitor is listed, then
-  `kill -9`s the process and asserts it is gone.
+  gained a probe it never had: where logind grants the lock it asks logind whether the
+  inhibitor is listed, then `kill -9`s the process and asserts it is gone. GitHub's
+  runners refuse the lock outright, so there that layer announces a skip and the rest
+  — no bus, honest output, plain ASCII, exit 0 — still runs.
 - **The ASCII guarantee only covered the path that could not break it.** CI asserted
   the `--smoke` output was ASCII on the run where everything worked; the D-Bus error
   strings, config paths and `--why` text that could contain anything else only appear

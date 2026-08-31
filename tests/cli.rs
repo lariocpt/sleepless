@@ -160,13 +160,29 @@ fn reset_state_forgets_the_saved_settings() {
     std::fs::write(&state, "mode = \"plugged-only\"\nsplash = \"coffee\"\n").unwrap();
 
     // Without the flag the saved mode wins, which is the behaviour --reset-state
-    // exists to undo.
+    // exists to undo. Asserted on the `mode=` field, not on the AWAKE line: a CI
+    // runner is refused every lock, and a test that needs one is a test that only
+    // passes on a developer's own machine.
     let out = sandboxed(home.path())
         .args(["--smoke", "0"])
         .output()
         .unwrap();
-    assert!(stdout(&out).contains("plugged-only"), "{}", stdout(&out));
+    assert!(
+        stdout(&out).contains("mode=plugged-only"),
+        "the saved mode should apply:\n{}",
+        stdout(&out)
+    );
     assert!(state.exists());
+
+    let out = sandboxed(home.path())
+        .args(["--always", "--smoke", "0"])
+        .output()
+        .unwrap();
+    assert!(
+        stdout(&out).contains("mode=always"),
+        "--always should outrank the saved mode:\n{}",
+        stdout(&out)
+    );
 
     let out = sandboxed(home.path())
         .args(["--reset-state", "--smoke", "0"])
@@ -176,6 +192,11 @@ fn reset_state_forgets_the_saved_settings() {
     assert!(
         !state.exists(),
         "--reset-state should remove the state file"
+    );
+    assert!(
+        stdout(&out).contains("mode=always"),
+        "and the run itself should already be back on the defaults:\n{}",
+        stdout(&out)
     );
     // And it is fine to ask twice.
     let out = sandboxed(home.path())

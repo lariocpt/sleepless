@@ -41,6 +41,10 @@ echo "smoke: $BIN ($(uname -s))"
 run "$BIN" --always --smoke 2 > "$WORK/out.txt"
 grep -q 'sleepless - ' "$WORK/out.txt" || {
     echo "FAIL: no status line"; cat "$WORK/out.txt"; exit 1; }
+# The mode belongs on the line whether or not a lock was granted: a machine that is
+# refused every inhibitor still has to say which mode it was refused in.
+grep -q 'mode=always' "$WORK/out.txt" || {
+    echo "FAIL: the status line does not report the mode"; cat "$WORK/out.txt"; exit 1; }
 say "status line: $(head -1 "$WORK/out.txt")"
 
 # The output is what scripts grep and what a Windows code page has to render, so it
