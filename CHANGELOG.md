@@ -51,11 +51,15 @@ working; all of it is about the cases where it said one thing and did another.
   back to the previous good release. Re-publishing an older tag can no longer demote
   the current one.
 - **The archives are reproducible.** `tar acf` recorded the build time, the building
-  user and the machine's umask. Packaging is now normalised (sorted members, fixed
-  mtimes, `0:0` ownership, fixed modes, `gzip -n`) and the compiler's embedded paths
-  are remapped, so `tools/package.py --target ...` on any machine with the toolchain
-  in `.rust-version` gives back the published checksum. The release workflow asserts
-  that on all eight targets rather than claiming it.
+  user and the machine's umask, and on Windows the MSVC linker stamped the PE header
+  with the wall clock. Packaging is now normalised (sorted members, fixed mtimes,
+  `0:0` ownership, fixed modes, `gzip -n`), the compiler's embedded paths are
+  remapped, and the Windows builds pass `/Brepro`. The release workflow rebuilds all
+  eight targets on fresh runners and refuses to publish if any checksum differs.
+  The honest limit: cargo links a static musl binary with the host's own `cc`, so a
+  rebuild on a machine with a different system linker can still differ — same
+  platform reproduces, a different one may not. The build attestation on every
+  archive is the check that does not depend on the environment.
 - **Nothing checked that the tag matched the version.** Tagging `v0.1.2` without
   bumping `Cargo.toml` would have shipped a binary reporting `0.1.0`. The release now
   refuses to start if the two disagree, or if `CHANGELOG.md` has no section for it —

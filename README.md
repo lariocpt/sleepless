@@ -106,9 +106,26 @@ The `-musl` builds are statically linked with no glibc floor at all, so they run
 and on old enterprise distros alike; the `-gnu` builds exist for anyone who wants dynamic
 linking and are built on the oldest supported image to keep that floor low. Homebrew and
 the AUR package both install the musl build and both pin its sha256, so every route hands
-you the same bytes. The archives are reproducible: rebuilding a tag with
-`tools/package.py` gives back the published checksum, and the release workflow asserts
-that on every release rather than claiming it.
+you the same bytes.
+
+### Reproducing a release
+
+The archives are built deterministically — sorted members, fixed mtimes, `0:0` ownership,
+fixed modes, `gzip -n`, and the compiler's own paths remapped — so on the same platform,
+with the toolchain pinned in `.rust-version`, `tools/package.py --target <target> --tag
+<tag>` rebuilds a tag's archive byte for byte. The release workflow asserts exactly that
+before anything goes live: it rebuilds all eight targets on fresh runners and refuses to
+publish if any checksum differs.
+
+Across *different* hosts the system linker still gets a say — cargo links a static musl
+binary with the host's own `cc`, and a different `ld` lays the sections out differently —
+so a rebuild on your machine may not match byte for byte even though the sources and the
+compiler do. The check that does not depend on your environment is the build attestation
+every archive carries:
+
+```sh
+gh attestation verify sleepless-<target>-<tag>.tar.gz --repo lariocpt/sleepless
+```
 
 Building from source requires Rust 1.89 or newer. The dependency tree is pure Rust — no C toolchain, no
 `pkg-config`, no system libraries — so cross-compiling and static musl builds work without
