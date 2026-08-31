@@ -204,6 +204,7 @@ jobs:
             f { print }
           ' CHANGELOG.md > "$notes"
           [ -s "$notes" ] || { echo "::error::extracted empty release notes for $TAG"; exit 1; }
+          # shellcheck disable=SC2016  # the backticks below are markdown fences
           {
             printf '\n### Verifying a download\n\n```sh\n'
             printf 'sha256sum -c sleepless-<target>-%s.sha256\n```\n\n' "$TAG"
