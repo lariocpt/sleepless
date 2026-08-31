@@ -42,7 +42,10 @@ targets=(
 )
 declare -A SUM
 for t in "${targets[@]}"; do
-  name="sleepless-$t-$TAG.sha256"
+  # The checksum asset is the archive's own name plus .sha256, which is what
+  # `sha256sum -c` wants to read out of it. Getting this wrong 404s silently in a
+  # loop that otherwise looks like it worked.
+  name="sleepless-$t-$TAG.tar.gz.sha256"
   gh release download "$TAG" --repo "$REPO" --dir "$work" --pattern "$name" \
     || fail "$TAG has no $name -- is the release published?"
   SUM[$t]=$(cut -d' ' -f1 "$work/$name")

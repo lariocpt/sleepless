@@ -207,7 +207,7 @@ jobs:
           # shellcheck disable=SC2016  # the backticks below are markdown fences
           {
             printf '\n### Verifying a download\n\n```sh\n'
-            printf 'sha256sum -c sleepless-<target>-%s.sha256\n```\n\n' "$TAG"
+            printf 'sha256sum -c sleepless-<target>-%s.tar.gz.sha256\n```\n\n' "$TAG"
             printf 'Every archive here was rebuilt from this tag on a second machine and '
             printf 'required to come out byte-identical before the release went live. To '
             printf 'check one yourself without matching the build environment:\n\n'
@@ -336,6 +336,57 @@ jobs:
           fi
           gh release edit "$TAG" --draft=false "$latest"
           echo "published $TAG ($latest)"
+
+  # The exact path the README tells a stranger to take, unauthenticated, against the
+  # live release. Every other check in this workflow looks at files it built or
+  # uploaded itself; this one starts from the public `latest` URL and knows nothing.
+  #
+  # It exists because v0.1.1 shipped with a documented verification command that
+  # 404'd on the checksum: the archive name was right, the checksum name was the old
+  # release's convention, and every other line of the snippet worked.
+  public-download:
+    needs: [meta, flip]
+    if: ${{ needs.meta.outputs.pre != 'true' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+      VERSION: ${{ needs.meta.outputs.version }}
+      TAG: ${{ needs.meta.outputs.tag }}
+    steps:
+      - name: Download and verify the way the README says to
+        shell: bash
+        run: |
+          set -euo pipefail
+          d=$(mktemp -d); cd "$d"
+          target=x86_64-unknown-linux-musl
+
+          # A bounded retry, because `latest` and the asset CDN take a moment to catch
+          # up -- and a version compare, because a stale `latest` serving the PREVIOUS
+          # release would pass every checksum it was given.
+          for i in 1 2 3 4 5 6; do
+            tag=$(curl -fsSLo /dev/null -w '%{url_effective}' \
+                    https://github.com/lariocpt/sleepless/releases/latest | sed 's#.*/##')
+            [ "$tag" = "$TAG" ] && break
+            echo "attempt $i: latest is $tag, waiting for $TAG"; sleep 10
+          done
+          [ "$tag" = "$TAG" ] || { echo "::error::latest never became $TAG (it is $tag)"; exit 1; }
+
+          archive="sleepless-$target-$tag.tar.gz"
+          base="https://github.com/lariocpt/sleepless/releases/download/$tag"
+          curl -fsSLO "$base/$archive" -O "$base/$archive.sha256"
+          sha256sum -c "$archive.sha256"
+          tar xzf "$archive" sleepless
+          chmod +x sleepless
+          got=$(./sleepless --version)
+          [ "$got" = "sleepless $VERSION" ] \
+            || { echo "::error::the public download says '$got'"; exit 1; }
+
+          # And the check the README points at for anyone who cannot match the build
+          # environment.
+          gh attestation verify "$archive" --repo lariocpt/sleepless
+          echo "the public path serves sleepless $VERSION, verified and attested"
 
   # crates.io is published by hand -- no long-lived registry token lives here -- but
   # a channel nothing checks is a channel that drifts. 0.1.0 went to crates.io seven

@@ -414,6 +414,49 @@ fn the_sites_block_font_is_the_programs_block_font() {
 }
 
 #[test]
+fn the_readme_names_the_checksum_files_that_actually_exist() {
+    // The README told people to fetch `sleepless-<target>-<tag>.sha256`. The release
+    // publishes `sleepless-<target>-<tag>.tar.gz.sha256` -- the archive's own name plus
+    // a suffix, which is what `sha256sum -c` reads out of it. The documented command
+    // 404'd on the checksum and every other line of it worked, so it looked fine.
+    let readme = readme();
+    let mut checked = 0;
+    let mut fenced = false;
+    for line in readme.lines() {
+        if line.starts_with("```") {
+            fenced = !fenced;
+            continue;
+        }
+        if !fenced {
+            continue;
+        }
+        for tok in line.split(|c: char| c.is_whitespace() || c == '"' || c == '\'') {
+            if !tok.contains(".sha256") {
+                continue;
+            }
+            checked += 1;
+            // The rule is that the checksum file is the ARCHIVE's name plus
+            // `.sha256`, so a reference is either a literal ending in
+            // `.tar.gz.sha256`/`.zip.sha256`, or the snippet's `$archive` variable --
+            // which is bound to the archive name two lines above it.
+            let names_the_archive = tok.ends_with(".tar.gz.sha256")
+                || tok.ends_with(".zip.sha256")
+                || tok.ends_with("archive.sha256")
+                || tok.ends_with("archive}.sha256");
+            assert!(
+                names_the_archive,
+                "README asks for {tok:?}; the release publishes <archive>.sha256, so \
+                 that URL is a 404"
+            );
+        }
+    }
+    assert!(
+        checked > 0,
+        "the README no longer shows how to verify a download"
+    );
+}
+
+#[test]
 fn the_install_methods_are_the_same_on_both_pages() {
     // The README grew Homebrew and prebuilt binaries; the site was never updated,
     // so the two pages advertised different products.
