@@ -125,6 +125,17 @@ check(
     "concurrency:" in release,
     "release.yml: two tag pushes must not race each other",
 )
+reproduce = release.split("\n  reproduce:\n")[-1].split("\n  flip:")[0]
+check(
+    "download-artifact" in reproduce and "gh release download" not in reproduce,
+    "release.yml: the reproduce job must compare against the build artifact, not the "
+    "release: reading a DRAFT release needs push access, so doing it there would mean "
+    "granting write just to look at a file the job already has",
+)
+check(
+    "contents: write" not in reproduce,
+    "release.yml: the reproduce job only rebuilds and compares; it needs no write",
+)
 check(
     "if: failure()" in release,
     "release.yml: a failed run must put the release back into draft so `latest` "
