@@ -96,10 +96,11 @@ eight targets, each with a `.sha256` beside it that `sha256sum -c` reads directl
 target=x86_64-unknown-linux-musl
 tag=$(curl -fsSLo /dev/null -w '%{url_effective}' \
         https://github.com/lariocpt/sleepless/releases/latest | sed 's#.*/##')
-base="https://github.com/lariocpt/sleepless/releases/download/$tag/sleepless-$target-$tag"
-curl -fsSLO "$base.tar.gz" -O "$base.sha256"
-sha256sum -c "sleepless-$target-$tag.sha256"     # verify before you run it
-tar xzf "sleepless-$target-$tag.tar.gz" sleepless
+archive="sleepless-$target-$tag.tar.gz"
+base="https://github.com/lariocpt/sleepless/releases/download/$tag"
+curl -fsSLO "$base/$archive" -O "$base/$archive.sha256"
+sha256sum -c "$archive.sha256"        # verify before you run it
+tar xzf "$archive" sleepless
 ```
 
 The `-musl` builds are statically linked with no glibc floor at all, so they run on Alpine

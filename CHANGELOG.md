@@ -11,6 +11,36 @@ section here. The `version` in `Cargo.toml` must match the tag being released.
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-08-31
+
+A documentation release. 0.1.1's artifacts are sound -- checksums, attestations and
+all eight reproducibility rebuilds check out -- but the README it shipped told people
+to verify a download using a file that does not exist.
+
+### Fixed
+
+- **The documented way to verify a download 404'd.** The README asked for
+  `sleepless-<target>-<tag>.sha256`; the release publishes
+  `sleepless-<target>-<tag>.tar.gz.sha256`, the archive's own name plus a suffix,
+  which is what `sha256sum -c` reads out of it. The old name was 0.1.0's convention,
+  from before packaging moved in-house. Every other line of the snippet worked -- the
+  archive downloaded, extracted and ran -- so only the one line that proves the
+  download has not been tampered with quietly failed. `tools/bump-channels.sh` was
+  fetching the same wrong name, in a loop that would otherwise have looked like it
+  succeeded.
+
+### Added
+
+- A `public-download` release job that takes the exact path the README describes,
+  unauthenticated, against the live release: resolve the public `latest` redirect,
+  download the archive and its checksum, `sha256sum -c`, extract, check the version,
+  verify the attestation. Every other check in that workflow inspects files it built
+  or uploaded itself; this one starts from the public URL and knows nothing. With a
+  bounded retry for CDN catch-up and a version compare, because a stale `latest`
+  serving the previous release would pass every checksum it was handed.
+- `tests/docs.rs` asserts every `.sha256` reference in the README names the archive
+  plus a suffix, so the offline half of the same check cannot drift either.
+
 ## [0.1.1] - 2026-08-31
 
 A review release: everything below came out of a full pass over 0.1.0 the week after
@@ -159,6 +189,7 @@ to clean up.
   exits, with no TTY.
 - Prebuilt binaries for eight targets, a Homebrew tap, an AUR package, and a website.
 
-[Unreleased]: https://github.com/lariocpt/sleepless/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/lariocpt/sleepless/compare/v0.1.2...HEAD
+[0.1.2]: https://github.com/lariocpt/sleepless/releases/tag/v0.1.2
 [0.1.1]: https://github.com/lariocpt/sleepless/releases/tag/v0.1.1
 [0.1.0]: https://github.com/lariocpt/sleepless/releases/tag/v0.1.0
