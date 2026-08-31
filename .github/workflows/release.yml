@@ -251,8 +251,15 @@ jobs:
 
   # Provenance, and it is what makes the published checksum mean anything: rebuild the
   # tag from scratch on a different machine and require the same bytes.
+  #
+  # Compared against the BUILD ARTIFACT, not against the release. Reading a draft
+  # release needs push access, and this job should not have write on the repository
+  # just to look at a file it could already see. The chain is complete without it:
+  # `publish` downloads its own uploaded assets back and `cmp`s them against these
+  # same artifacts, so artifact == published, and rebuild == artifact proves
+  # rebuild == published.
   reproduce:
-    needs: [meta, publish]
+    needs: [meta, build]
     strategy:
       fail-fast: false
       matrix:
@@ -269,8 +276,6 @@ jobs:
     permissions:
       contents: read
     env:
-      GH_TOKEN: ${{ github.token }}
-      GH_REPO: ${{ github.repository }}
       TAG: ${{ needs.meta.outputs.tag }}
       TARGET: ${{ matrix.target }}
     steps:
@@ -281,22 +286,26 @@ jobs:
       - uses: ./.github/actions/rust
         with:
           targets: ${{ matrix.target }}
-      - name: Rebuild the tag and compare with what was published
+      - uses: actions/download-artifact@v4
+        with:
+          name: archive-${{ matrix.target }}
+          path: published
+      - name: Rebuild the tag and compare with what is being published
         shell: bash
         run: |
           set -euo pipefail
           py=$(command -v python3 || command -v python)
           "$py" tools/package.py --target "$TARGET" --tag "$TAG" --out rebuilt
           name=$(basename rebuilt/*.sha256)
-          gh release download "$TAG" --dir published --pattern "$name"
+          test -f "published/$name" || { echo "::error::no built artifact named $name"; exit 1; }
           want=$(cut -d' ' -f1 "published/$name")
           got=$(cut -d' ' -f1 "rebuilt/$name")
           [ "$want" = "$got" ] || {
-            echo "::error::$TARGET: the released archive is not what $TAG builds"
-            echo "  published $want"
+            echo "::error::$TARGET: the archive being published is not what $TAG builds"
+            echo "  built     $want"
             echo "  rebuilt   $got"
             exit 1; }
-          echo "provenance: $TARGET is byte-identical to a rebuild of $TAG"
+          echo "provenance: $TARGET is byte-identical to a rebuild of $TAG ($got)"
 
   # Only now does anything become visible.
   flip:
