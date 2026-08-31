@@ -1,82 +1,374 @@
 name: release
 
+# ORDER IS THE WHOLE DESIGN.
+#
+# The previous version created a public, non-draft release as its FIRST step, before
+# a single line was built, and its uploads trailed in over the next three minutes. It
+# ran no tests at all: ci.yml does not fire on tags, so the one path to the public was
+# the one path with no gate. v0.1.0's own history has two red runs against a release
+# that stayed up regardless.
+#
+# It also used create-gh-release-action, which DELETES an existing release before
+# recreating it. Re-running the workflow therefore took the live release away, and
+# because the archives were not reproducible it gave back different bytes -- silently
+# invalidating the sha256 values pinned in the Homebrew formula and the AUR PKGBUILD,
+# so `brew install` and `makepkg` would start accusing the user of tampering.
+#
+# Now: the gate is ci.yml itself, called rather than copied. The release is created as
+# a DRAFT, which is excluded from `latest` and whose assets need a token, so nothing
+# broken is ever served. Its own published assets are downloaded back and checked, the
+# tag is rebuilt from scratch and required to produce byte-identical archives, and only
+# then is the draft bit flipped. Anything that fails afterwards re-drafts it, so
+# `latest` falls back to the previous good release rather than pointing at a half-made
+# one.
+
 on:
   push:
     tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing tag to (re)publish, e.g. v0.1.1'
+        required: true
 
-permissions:
-  contents: write
-  id-token: write
-  attestations: write
+permissions: {}
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
 
 jobs:
-  # upload-rust-binary-action uploads *into* a release; a tag push does not create
-  # one, so every matrix job failed with "release not found". Create it first and
-  # let the uploads attach to it.
-  create-release:
+  meta:
     runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.t.outputs.tag }}
+      version: ${{ steps.v.outputs.version }}
+      pre: ${{ steps.t.outputs.pre }}
     steps:
-      - uses: actions/checkout@v5
-      - uses: taiki-e/create-gh-release-action@v1
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Resolve the tag
+        id: t
+        shell: bash
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
+          REF: ${{ github.ref }}
+        run: |
+          set -euo pipefail
+          tag="${INPUT_TAG:-${REF#refs/tags/}}"
+          case "$tag" in
+            v[0-9]*.[0-9]*.[0-9]*) ;;
+            *) echo "::error::'$tag' is not a vX.Y.Z release tag"; exit 1 ;;
+          esac
+          pre=false; case "$tag" in *-*) pre=true ;; esac
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "pre=$pre" >> "$GITHUB_OUTPUT"
 
-  upload:
-    needs: create-release
+      - uses: actions/checkout@v5
+        with:
+          ref: refs/tags/${{ steps.t.outputs.tag }}
+          persist-credentials: false
+
+      # A tag that ships a binary reporting a different version is a lie the user
+      # only finds after installing. Nothing checked this before.
+      - name: The tag must match the Cargo.toml version
+        id: v
+        shell: bash
+        env:
+          TAG: ${{ steps.t.outputs.tag }}
+        run: |
+          set -euo pipefail
+          v=$(sed -n 's/^version[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' Cargo.toml | head -1)
+          [ -n "$v" ] || { echo "::error file=Cargo.toml::could not parse version"; exit 1; }
+          base=${TAG#v}; base=${base%%-*}
+          [ "$base" = "$v" ] || {
+            echo "::error file=Cargo.toml::tag $TAG claims $base, Cargo.toml says $v"; exit 1; }
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+
+      # Release notes come from CHANGELOG.md, and a release with none is a release
+      # nobody can read. The heading shape is load-bearing, not decorative.
+      - name: The release notes must exist
+        shell: bash
+        env:
+          VERSION: ${{ steps.v.outputs.version }}
+        run: |
+          set -euo pipefail
+          # shellcheck disable=SC2016  # $0 belongs to awk, not the shell
+          awk -v want="## [$VERSION]" 'index($0, want) == 1 { found = 1 } END { exit !found }' \
+            CHANGELOG.md \
+            || { echo "::error file=CHANGELOG.md::no '## [$VERSION]' section"; exit 1; }
+
+  # The identical gate, called rather than copied: fmt, clippy on all eight targets,
+  # MSRV, the test suite and the platform smoke probe on five runners, the docs-vs-code
+  # checks, and the reproducibility comparison.
+  gate:
+    needs: meta
+    permissions:
+      contents: read
+    uses: ./.github/workflows/ci.yml
+
+  build:
+    needs: [meta, gate]
     strategy:
       fail-fast: false
       matrix:
         include:
-          # musl-static is the recommended Linux download: it has no glibc floor
-          # at all, so it runs on Alpine and on old enterprise distros alike.
-          # (glibc symbol versioning is a floor, not a ceiling -- a binary records
-          # the minimum version each imported symbol needs, so build-old/run-new is
-          # safe and the reverse is not. Static musl removes the question entirely,
-          # which this dependency tree allows because it is pure Rust.)
-          - target: x86_64-unknown-linux-musl
-            os: ubuntu-latest
-            tool: cross
-          # cross assumes an x86_64 host and tries to install the x86_64 toolchain,
-          # which fails on an arm runner. This target is the runner's own
-          # architecture anyway -- only the libc differs -- and Rust ships
-          # self-contained musl crt objects, so plain cargo builds it.
-          - target: aarch64-unknown-linux-musl
-            os: ubuntu-24.04-arm
-            tool: cargo
+          # Every target is built natively. `cross` used to build x86_64-musl in a
+          # container, whose paths differ from a host build's, so the two could never
+          # produce the same bytes -- and Rust ships self-contained musl CRT objects,
+          # which is why aarch64-musl had already stopped using it.
+          - { target: x86_64-unknown-linux-musl,   os: ubuntu-latest }
+          - { target: aarch64-unknown-linux-musl,  os: ubuntu-24.04-arm }
           # A glibc build too, on the oldest supported image for the lowest floor.
-          - target: x86_64-unknown-linux-gnu
-            os: ubuntu-22.04
-            tool: cargo
-          - target: aarch64-unknown-linux-gnu
-            os: ubuntu-24.04-arm
-            tool: cargo
-          # Build macOS on macOS: arm64 Mach-O needs a signature, even an ad-hoc
-          # one, and the linker only applies that on a Mac.
-          - target: aarch64-apple-darwin
-            os: macos-latest
-            tool: cargo
-          - target: x86_64-apple-darwin
-            os: macos-15-intel
-            tool: cargo
-          - target: x86_64-pc-windows-msvc
-            os: windows-latest
-            tool: cargo
-          - target: aarch64-pc-windows-msvc
-            os: windows-11-arm
-            tool: cargo
+          - { target: x86_64-unknown-linux-gnu,    os: ubuntu-22.04 }
+          - { target: aarch64-unknown-linux-gnu,   os: ubuntu-24.04-arm }
+          # Build macOS on macOS: an arm64 Mach-O needs a signature, even an ad-hoc
+          # one, and only a Mac's linker applies it.
+          - { target: aarch64-apple-darwin,        os: macos-latest }
+          - { target: x86_64-apple-darwin,         os: macos-15-intel }
+          - { target: x86_64-pc-windows-msvc,      os: windows-latest }
+          - { target: aarch64-pc-windows-msvc,     os: windows-11-arm }
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@stable
+        with:
+          ref: refs/tags/${{ needs.meta.outputs.tag }}
+          persist-credentials: false
+      - uses: ./.github/actions/rust
         with:
           targets: ${{ matrix.target }}
-      - uses: taiki-e/upload-rust-binary-action@v1
+      - name: Build the archive
+        shell: bash
+        env:
+          TAG: ${{ needs.meta.outputs.tag }}
+          TARGET: ${{ matrix.target }}
+        run: |
+          set -euo pipefail
+          py=$(command -v python3 || command -v python)
+          "$py" tools/package.py --target "$TARGET" --tag "$TAG" --out dist
+          ls -l dist
+      - uses: actions/upload-artifact@v4
         with:
-          bin: sleepless
-          target: ${{ matrix.target }}
-          build-tool: ${{ matrix.tool }}
-          locked: true
-          checksum: sha256
-          include: README.md,LICENSE
-          archive: $bin-$target-$tag
-          token: ${{ secrets.GITHUB_TOKEN }}
+          name: archive-${{ matrix.target }}
+          path: dist/*
+          if-no-files-found: error
+
+  publish:
+    needs: [meta, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      TAG: ${{ needs.meta.outputs.tag }}
+      VERSION: ${{ needs.meta.outputs.version }}
+      PRE: ${{ needs.meta.outputs.pre }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: refs/tags/${{ needs.meta.outputs.tag }}
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: archive-*
+          merge-multiple: true
+          path: dist
+
+      - name: The archives match the checksums built beside them
+        shell: bash
+        run: |
+          set -euo pipefail
+          ( cd dist && sha256sum -c ./*.sha256 )
+          sums=(dist/*.sha256)
+          [ "${#sums[@]}" -eq 8 ] \
+            || { echo "::error::expected 8 archives, found ${#sums[@]}"; exit 1; }
+
+      # The permissions for this were granted a release ago and never used.
+      - uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: 'dist/*.tar.gz, dist/*.zip'
+
+      - name: Publish as a draft
+        shell: bash
+        run: |
+          set -euo pipefail
+          notes=$(mktemp)
+          # shellcheck disable=SC2016  # $0 belongs to awk, not the shell
+          awk -v want="## [$VERSION]" '
+            index($0, want) == 1 { f = 1; next }
+            f && index($0, "## [") == 1 { exit }
+            f { print }
+          ' CHANGELOG.md > "$notes"
+          [ -s "$notes" ] || { echo "::error::extracted empty release notes for $TAG"; exit 1; }
+          {
+            printf '\n### Verifying a download\n\n```sh\n'
+            printf 'sha256sum -c sleepless-<target>-%s.sha256\n```\n\n' "$TAG"
+            printf 'Every archive is reproducible: rebuilding this tag with '
+            printf 'tools/package.py --target TARGET gives back the same bytes, and this '
+            printf 'workflow asserts that before the release goes live.\n'
+          } >> "$notes"
+
+          pre_flag='--prerelease=false'; [ "$PRE" = true ] && pre_flag='--prerelease'
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            # A re-run exists to fix something. Put the release BACK into draft first,
+            # so `latest` falls back to the previous release for the duration instead
+            # of serving half-replaced assets.
+            gh release edit "$TAG" --draft
+            gh release upload "$TAG" dist/* --clobber
+            gh release edit "$TAG" --title "sleepless ${TAG#v}" --notes-file "$notes" "$pre_flag"
+          else
+            gh release create "$TAG" dist/* \
+              --draft --verify-tag \
+              --title "sleepless ${TAG#v}" \
+              --notes-file "$notes" "$pre_flag"
+          fi
+
+      # The only step that proves the PUBLISHED bytes work, rather than the local
+      # build that produced them.
+      - name: Verify the draft's own assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          d=$(mktemp -d)
+          gh release download "$TAG" --dir "$d"
+          ( cd "$d" && sha256sum -c ./*.sha256 )
+          for f in dist/*.tar.gz dist/*.zip; do
+            cmp "$f" "$d/$(basename "$f")" \
+              || { echo "::error::$(basename "$f") came back different from what was uploaded"; exit 1; }
+          done
+          # And it runs, and says what the tag says.
+          tar xzf "$d/sleepless-x86_64-unknown-linux-musl-$TAG.tar.gz" -C "$d" sleepless
+          chmod +x "$d/sleepless"                     # release assets arrive without the bit
+          got=$("$d/sleepless" --version | tr -d '\r')
+          [ "$got" = "sleepless $VERSION" ] \
+            || { echo "::error::the published asset says '$got', expected 'sleepless $VERSION'"; exit 1; }
+          got=("$d"/*.tar.gz "$d"/*.zip)
+          echo "verified ${#got[@]} published archives"
+
+  # Provenance, and it is what makes the published checksum mean anything: rebuild the
+  # tag from scratch on a different machine and require the same bytes.
+  reproduce:
+    needs: [meta, publish]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { target: x86_64-unknown-linux-musl,   os: ubuntu-latest }
+          - { target: aarch64-unknown-linux-musl,  os: ubuntu-24.04-arm }
+          - { target: x86_64-unknown-linux-gnu,    os: ubuntu-22.04 }
+          - { target: aarch64-unknown-linux-gnu,   os: ubuntu-24.04-arm }
+          - { target: aarch64-apple-darwin,        os: macos-latest }
+          - { target: x86_64-apple-darwin,         os: macos-15-intel }
+          - { target: x86_64-pc-windows-msvc,      os: windows-latest }
+          - { target: aarch64-pc-windows-msvc,     os: windows-11-arm }
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      TAG: ${{ needs.meta.outputs.tag }}
+      TARGET: ${{ matrix.target }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: refs/tags/${{ needs.meta.outputs.tag }}
+          persist-credentials: false
+      - uses: ./.github/actions/rust
+        with:
+          targets: ${{ matrix.target }}
+      - name: Rebuild the tag and compare with what was published
+        shell: bash
+        run: |
+          set -euo pipefail
+          py=$(command -v python3 || command -v python)
+          "$py" tools/package.py --target "$TARGET" --tag "$TAG" --out rebuilt
+          name=$(basename rebuilt/*.sha256)
+          gh release download "$TAG" --dir published --pattern "$name"
+          want=$(cut -d' ' -f1 "published/$name")
+          got=$(cut -d' ' -f1 "rebuilt/$name")
+          [ "$want" = "$got" ] || {
+            echo "::error::$TARGET: the released archive is not what $TAG builds"
+            echo "  published $want"
+            echo "  rebuilt   $got"
+            exit 1; }
+          echo "provenance: $TARGET is byte-identical to a rebuild of $TAG"
+
+  # Only now does anything become visible.
+  flip:
+    needs: [meta, publish, reproduce]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      TAG: ${{ needs.meta.outputs.tag }}
+      PRE: ${{ needs.meta.outputs.pre }}
+    steps:
+      - name: Flip it live
+        shell: bash
+        run: |
+          set -euo pipefail
+          # `--latest` only when this tag is the highest non-prerelease semver:
+          # re-publishing an older tag must never demote the current release and
+          # downgrade everyone who installs from `latest`.
+          latest='--latest=false'
+          if [ "$PRE" != true ]; then
+            top=$({ gh release list --exclude-drafts --exclude-pre-releases \
+                      --json tagName -q '.[].tagName'; echo "$TAG"; } | sort -V | tail -1)
+            [ "$top" = "$TAG" ] && latest='--latest'
+          fi
+          gh release edit "$TAG" --draft=false "$latest"
+          echo "published $TAG ($latest)"
+
+  # crates.io is published by hand -- no long-lived registry token lives here -- but
+  # a channel nothing checks is a channel that drifts. 0.1.0 went to crates.io seven
+  # hours before the GitHub release existed and nothing noticed.
+  crates-io:
+    needs: [meta, flip]
+    if: ${{ needs.meta.outputs.pre != 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: crates.io serves this version
+        shell: bash
+        env:
+          VERSION: ${{ needs.meta.outputs.version }}
+        run: |
+          set -euo pipefail
+          for i in 1 2 3 4 5 6 7 8 9 10; do
+            got=$(curl -fsS -H 'User-Agent: sleepless-release' \
+                    https://crates.io/api/v1/crates/sleepless \
+                  | jq -r '.crate.max_stable_version' || echo '')
+            if [ "$got" = "$VERSION" ]; then
+              echo "crates.io serves sleepless $VERSION"; exit 0
+            fi
+            echo "attempt $i: crates.io is on '${got:-?}', waiting for $VERSION"
+            sleep 30
+          done
+          echo "::error::crates.io never served $VERSION -- run \`cargo publish\` for this tag"
+          exit 1
+
+  # Anything above failed after the release was created: put it back into draft, so
+  # `latest` is the previous good release and the failed one serves nothing.
+  redraft:
+    needs: [meta, publish, reproduce, flip]
+    if: failure()
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      TAG: ${{ needs.meta.outputs.tag }}
+    steps:
+      - shell: bash
+        run: |
+          set -euo pipefail
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release edit "$TAG" --draft && echo "re-drafted $TAG"
+          fi

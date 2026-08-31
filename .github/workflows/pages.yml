@@ -3,7 +3,12 @@ name: pages
 on:
   push:
     branches: [main]
-    paths: ['docs/**', '.github/workflows/pages.yml']
+    paths:
+      - 'docs/**'
+      - 'tools/check-site.py'
+      - 'tools/gen-site-font.py'
+      - 'src/art.rs'
+      - '.github/workflows/pages.yml'
   workflow_dispatch:
 
 permissions:
@@ -17,19 +22,35 @@ concurrency:
 
 jobs:
   deploy:
-    # Pages is not enabled on a private repository without a paid plan, so this
-    # would go red on every push to main until the repo is public. Skip until
-    # then; `enablement: true` below lets it configure itself when it runs.
-    if: ${{ github.event.repository.private == false }}
+    # Pages cannot be enabled on a private repository without a paid plan. Kept now
+    # the repo is public: it costs nothing and documents the dependency.
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.repository.private == false }}
     environment:
       name: github-pages
       url: ${{ steps.deploy.outputs.page_url }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-      # No build step on purpose: docs/index.html is a single self-contained file
-      # with no dependencies beyond Google Fonts, matching the project's own
-      # "one binary, no toolchain" posture.
+
+      # The site's own gate, run HERE, before the upload. This workflow has no
+      # dependency on ci.yml -- it cannot, because workflow_run has no paths filter --
+      # so a docs push used to deploy whatever it contained while ci went red
+      # afterwards, if it ran at all. docs/ is a release surface, not a scratch pad:
+      # it is what the README's headline link points at.
+      - uses: ./.github/actions/rust
+      - name: Gate the site
+        shell: bash
+        run: |
+          set -euo pipefail
+          # No external requests beyond Google Fonts, and every local asset present.
+          tools/check-site.py docs/index.html
+          # The hero claims to be set in the program's own block font; prove it.
+          tools/gen-site-font.py --check
+          # And every flag, key, config option and install command the page names has
+          # to be one the program actually has.
+          cargo test --locked --test docs
+
+      # No build step on purpose: docs/ is served byte-for-byte as committed.
       - uses: actions/configure-pages@v5
         with:
           enablement: true

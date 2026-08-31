@@ -1,6 +1,6 @@
 [package]
 name = "sleepless"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 # 1.89 comes from starship-battery (macOS/Windows only); ratatui needs 1.88 and
 # is the Linux ceiling. Declared as one number because Cargo has no per-target MSRV.
@@ -47,3 +47,8 @@ tempfile = "3"
 lto = "thin"
 codegen-units = 1
 strip = true
+# Note: nothing in a release binary may depend on where it was built, or a published
+# archive could never be compared against a rebuild of its own tag. `trim-paths` is
+# the eventual home for that and is still unstable, so tools/package.py passes
+# --remap-path-prefix instead. Keep the two in step if this is ever uncommented.
+# trim-paths = "all"

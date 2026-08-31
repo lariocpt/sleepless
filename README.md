@@ -85,11 +85,30 @@ systemd-inhibit --list | grep sleepless
 ```sh
 cargo install sleepless                      # crates.io
 brew install lariocpt/sleepless/sleepless    # macOS / Linuxbrew
+paru -S sleepless-bin                        # Arch Linux (AUR)
 cargo install --path .                       # from a clone
 ```
 
-Or grab a prebuilt binary from [Releases](https://github.com/lariocpt/sleepless/releases)
-— Linux builds are static musl, so they have no glibc floor and run anywhere.
+Or grab a prebuilt binary from [Releases](https://github.com/lariocpt/sleepless/releases) —
+eight targets, each with a `.sha256` beside it that `sha256sum -c` reads directly:
+
+```sh
+target=x86_64-unknown-linux-musl
+tag=$(curl -fsSLo /dev/null -w '%{url_effective}' \
+        https://github.com/lariocpt/sleepless/releases/latest | sed 's#.*/##')
+base="https://github.com/lariocpt/sleepless/releases/download/$tag/sleepless-$target-$tag"
+curl -fsSLO "$base.tar.gz" -O "$base.sha256"
+sha256sum -c "sleepless-$target-$tag.sha256"     # verify before you run it
+tar xzf "sleepless-$target-$tag.tar.gz" sleepless
+```
+
+The `-musl` builds are statically linked with no glibc floor at all, so they run on Alpine
+and on old enterprise distros alike; the `-gnu` builds exist for anyone who wants dynamic
+linking and are built on the oldest supported image to keep that floor low. Homebrew and
+the AUR package both install the musl build and both pin its sha256, so every route hands
+you the same bytes. The archives are reproducible: rebuilding a tag with
+`tools/package.py` gives back the published checksum, and the release workflow asserts
+that on every release rather than claiming it.
 
 Building from source requires Rust 1.89 or newer. The dependency tree is pure Rust — no C toolchain, no
 `pkg-config`, no system libraries — so cross-compiling and static musl builds work without
@@ -105,6 +124,7 @@ sleepless --inhibit-lid      # also block lid-close suspend (Linux)
 sleepless --no-tray          # no tray icon (Linux)
 sleepless --no-pulse         # no pulse animations
 sleepless --splash coffee    # start on a specific splash screen
+sleepless --reset-state      # forget the saved settings, use config.toml defaults
 sleepless --why "compiling all of chromium"
 ```
 
@@ -170,8 +190,10 @@ restored next launch.
 
 Precedence is **command-line flags > saved state > config.toml**. So `mode` and friends in
 config.toml act as first-run defaults; after you toggle something at runtime the saved
-value wins, and a flag like `--always` overrides both for that run. Delete the state file
-to go back to your config.toml defaults. A broken or unwritable state file is never fatal.
+value wins, and a flag like `--always` overrides both for that run. To go back to your
+config.toml defaults, run `sleepless --reset-state` once (or delete the state file — it is
+only ever a convenience, never a lock). A broken or unwritable state file is never fatal:
+sleepless says so in the footer once, keeps running, and retries occasionally.
 
 ## Good to know
 
@@ -193,7 +215,23 @@ to go back to your config.toml defaults. A broken or unwritable state file is ne
 
 - `cargo run -- --smoke 5` — headless: acquire locks, print plain-ASCII status, hold 5 s,
   exit. No TTY needed; this is what CI asserts against.
-- `cargo test` — unit tests (sysfs parsing, mode decision table, path rules, art layout).
+- `cargo test` — unit tests (sysfs parsing, mode decision table, flag precedence, path
+  rules, art layout, D-Bus lock liveness) plus two integration suites:
+  - `tests/docs.rs` checks this README and `docs/index.html` against the code — the flag
+    list, the config keys, the keybindings, the built-in splashes, the block font, the
+    pulse cadence and the install methods. It is there because a documented feature that
+    does not exist still compiles.
+  - `tests/cli.rs` runs the built binary inside a sandboxed `HOME`, so the suite can never
+    read or write your real config or state.
+
+  The D-Bus liveness test needs `dbus-daemon`; without it that one test prints `SKIP`
+  rather than failing.
+- `tools/gen-site-font.py` — regenerate the website's block font from `src/art.rs`.
+  `--check` is what CI runs; the site claims to use the program's own typeface, so it is
+  generated rather than copied.
+- `tools/package.py --target <target>` — build the release archive the way the release
+  workflow does: normalised mtimes, ownership, modes and sort order, so two builds of a
+  tag with the same toolchain (`.rust-version`) are byte-identical.
 - `cargo clippy --all-targets -- -D warnings` — must be clean, on **every** target:
 
   ```sh

@@ -145,6 +145,23 @@ impl App {
         }
     }
 
+    /// Notice a lock that has silently stopped being real -- the compositor or
+    /// logind restarted -- and drop it so the normal acquire path takes over.
+    /// Returns true if it did, so the caller can refresh the tray.
+    ///
+    /// Without this, `active()` is just `guard.is_some()`: the banner stayed green
+    /// and [`retry_if_due`](Self::retry_if_due) never fired, because it only fires
+    /// when there is no guard at all.
+    pub fn revalidate(&mut self, buses: &Buses) -> bool {
+        if self.guard.as_ref().is_some_and(|g| !g.is_live()) {
+            self.guard = None;
+            self.last_attempt = None; // reacquire now, not in five seconds
+            self.reconcile(buses);
+            return true;
+        }
+        false
+    }
+
     /// Self-heal after transient D-Bus failures without hammering the bus.
     pub fn retry_if_due(&mut self, buses: &Buses) {
         if self.guard.is_none()

@@ -1,0 +1,4 @@
+# Empty on purpose, but present on purpose too: `cargo fmt --check` runs in CI, so
+# without a pinned style edition a new rustfmt release can turn the build red with
+# no source change.
+style_edition = "2024"

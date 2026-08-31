@@ -375,8 +375,11 @@ footer a:hover { color: var(--awake); }
     </div>
 
     <p class="footnote prose" style="margin-top:6px;">
-      That is the whole design, and it is why there is no <code>--stop</code> flag, no PID file
-      and no state directory to get out of sync. Verify it yourself while it runs:
+      That is the whole design, and it is why there is nothing to switch off: no stop
+      command, no PID file, no daemon holding anything on your behalf. What it does
+      remember is only which mode and splash you left it on, in
+      <code>~/.local/state/sleepless/state.toml</code> &mdash; a convenience you can delete at
+      any time, never a lock. Verify the locks yourself while it runs:
       <code>systemd-inhibit --list | grep sleepless</code>.
     </p>
   </section>
@@ -535,11 +538,29 @@ footer a:hover { color: var(--awake); }
         </p>
       </div>
       <div class="stack-s">
+        <span class="k feat" style="color:var(--muted); font-family:var(--mono); font-size:.68rem; font-weight:700; letter-spacing:.12em; text-transform:uppercase;">macOS / Linuxbrew</span>
+        <div class="cmd"><span class="sigil">$</span>brew install lariocpt/sleepless/sleepless</div>
+        <p class="footnote">
+          A prebuilt binary from the tap, so there is nothing to compile. Linuxbrew gets the
+          static musl build.
+        </p>
+      </div>
+      <div class="stack-s">
+        <span class="k feat" style="color:var(--muted); font-family:var(--mono); font-size:.68rem; font-weight:700; letter-spacing:.12em; text-transform:uppercase;">Arch Linux</span>
+        <div class="cmd"><span class="sigil">$</span>paru -S sleepless-bin</div>
+        <p class="footnote">
+          <code>sleepless-bin</code> on the AUR: the same static musl binary from the release,
+          with its checksum pinned in the PKGBUILD.
+        </p>
+      </div>
+      <div class="stack-s">
         <span class="k feat" style="color:var(--muted); font-family:var(--mono); font-size:.68rem; font-weight:700; letter-spacing:.12em; text-transform:uppercase;">From source</span>
         <div class="cmd"><span class="sigil">$</span>cargo install --path .</div>
         <p class="footnote">
           Requires Rust 1.89 or newer. The dependency tree is pure Rust &mdash; no C toolchain,
-          no <code>pkg-config</code>, no system libraries.
+          no <code>pkg-config</code>, no system libraries. Prebuilt binaries for eight targets are
+          on the <a href="https://github.com/lariocpt/sleepless/releases">releases page</a>,
+          each with a <code>.sha256</code> beside it.
         </p>
       </div>
     </div>
@@ -548,12 +569,17 @@ footer a:hover { color: var(--awake); }
       <span class="eyebrow">Then</span>
       <pre class="block">sleepless                    <span style="color:var(--muted)"># stay awake while this runs</span>
 sleepless --plugged-only     <span style="color:var(--muted)"># ...but not on battery</span>
+sleepless --always           <span style="color:var(--muted)"># force always mode, ignoring what was saved</span>
 sleepless --inhibit-lid      <span style="color:var(--muted)"># also block lid-close suspend (Linux)</span>
-sleepless --why "rendering"  <span style="color:var(--muted)"># reason shown in systemd-inhibit --list</span></pre>
+sleepless --no-tray          <span style="color:var(--muted)"># no tray icon (Linux)</span>
+sleepless --no-pulse         <span style="color:var(--muted)"># no pulse animation</span>
+sleepless --splash coffee    <span style="color:var(--muted)"># start on a named splash screen</span>
+sleepless --reset-state      <span style="color:var(--muted)"># forget the remembered settings</span>
+sleepless --why "rendering"  <span style="color:var(--muted)"># reason shown by systemd-inhibit</span></pre>
       <p class="footnote">
-        Keys: <kbd>m</kbd> mode &middot; <kbd>l</kbd> lid block &middot;
-        <kbd>&larr;</kbd>&thinsp;<kbd>&rarr;</kbd> splash &middot; <kbd>q</kbd> quit.
-        Or just close the terminal.
+        Keys: <kbd>m</kbd> mode &middot; <kbd>l</kbd> lid block (Linux) &middot;
+        <kbd>&larr;</kbd>&thinsp;<kbd>&rarr;</kbd> splash &middot; <kbd>q</kbd> /
+        <kbd>Esc</kbd> / <kbd>Ctrl-C</kbd> quit. Or just close the terminal.
       </p>
     </div>
   </section>
@@ -571,24 +597,51 @@ sleepless --why "rendering"  <span style="color:var(--muted)"># reason shown in 
 <script>
 "use strict";
 
-/* The app's 5-row block font, lifted verbatim from src/art.rs so the hero is set
-   in the same typeface the program actually draws with. */
+/* BEGIN GENERATED FONT -- tools/gen-site-font.py, from src/art.rs */
 const GLYPHS = {
-  A:[" ### ","#   #","#####","#   #","#   #"], B:["#### ","#   #","#### ","#   #","#### "],
-  C:[" ####","#    ","#    ","#    "," ####"], D:["#### ","#   #","#   #","#   #","#### "],
-  E:["#####","#    ","#### ","#    ","#####"], F:["#####","#    ","#### ","#    ","#    "],
-  G:[" ####","#    ","# ###","#   #"," ####"], H:["#   #","#   #","#####","#   #","#   #"],
-  I:["#####","  #  ","  #  ","  #  ","#####"], J:["    #","    #","    #","#   #"," ### "],
-  K:["#   #","#  # ","###  ","#  # ","#   #"], L:["#    ","#    ","#    ","#    ","#####"],
-  M:["#   #","## ##","# # #","#   #","#   #"], N:["#   #","##  #","# # #","#  ##","#   #"],
-  O:[" ### ","#   #","#   #","#   #"," ### "], P:["#### ","#   #","#### ","#    ","#    "],
-  Q:[" ### ","#   #","#   #","#  # "," ## #"], R:["#### ","#   #","#### ","#  # ","#   #"],
-  S:[" ####","#    "," ### ","    #","#### "], T:["#####","  #  ","  #  ","  #  ","  #  "],
-  U:["#   #","#   #","#   #","#   #"," ### "], V:["#   #","#   #","#   #"," # # ","  #  "],
-  W:["#   #","#   #","# # #","## ##","#   #"], X:["#   #"," # # ","  #  "," # # ","#   #"],
-  Y:["#   #"," # # ","  #  ","  #  ","  #  "], Z:["#####","   # ","  #  "," #   ","#####"],
-  "'":["#","#"," "," "," "]
+  A:[" ### ","#   #","#####","#   #","#   #"],
+  B:["#### ","#   #","#### ","#   #","#### "],
+  C:[" ####","#    ","#    ","#    "," ####"],
+  D:["#### ","#   #","#   #","#   #","#### "],
+  E:["#####","#    ","#### ","#    ","#####"],
+  F:["#####","#    ","#### ","#    ","#    "],
+  G:[" ####","#    ","# ###","#   #"," ####"],
+  H:["#   #","#   #","#####","#   #","#   #"],
+  I:["#####","  #  ","  #  ","  #  ","#####"],
+  J:["    #","    #","    #","#   #"," ### "],
+  K:["#   #","#  # ","###  ","#  # ","#   #"],
+  L:["#    ","#    ","#    ","#    ","#####"],
+  M:["#   #","## ##","# # #","#   #","#   #"],
+  N:["#   #","##  #","# # #","#  ##","#   #"],
+  O:[" ### ","#   #","#   #","#   #"," ### "],
+  P:["#### ","#   #","#### ","#    ","#    "],
+  Q:[" ### ","#   #","#   #","#  # "," ## #"],
+  R:["#### ","#   #","#### ","#  # ","#   #"],
+  S:[" ####","#    "," ### ","    #","#### "],
+  T:["#####","  #  ","  #  ","  #  ","  #  "],
+  U:["#   #","#   #","#   #","#   #"," ### "],
+  V:["#   #","#   #","#   #"," # # ","  #  "],
+  W:["#   #","#   #","# # #","## ##","#   #"],
+  X:["#   #"," # # ","  #  "," # # ","#   #"],
+  Y:["#   #"," # # ","  #  ","  #  ","  #  "],
+  Z:["#####","   # ","  #  "," #   ","#####"],
+  0:[" ### ","#  ##","# # #","##  #"," ### "],
+  1:["  #  "," ##  ","  #  ","  #  ","#####"],
+  2:[" ### ","#   #","  ## "," #   ","#####"],
+  3:["#### ","    #"," ### ","    #","#### "],
+  4:["#  # ","#  # ","#####","   # ","   # "],
+  5:["#####","#    ","#### ","    #","#### "],
+  6:[" ### ","#    ","#### ","#   #"," ### "],
+  7:["#####","    #","   # ","  #  ","  #  "],
+  8:[" ### ","#   #"," ### ","#   #"," ### "],
+  9:[" ### ","#   #"," ####","    #"," ### "],
+  "'":["#","#"," "," "," "],
+  "-":["    ","    ","####","    ","    "],
+  "!":["#","#","#"," ","#"],
+  "?":[" ### ","#   #","  ## ","     ","  #  "],
+  ".":[" "," "," "," ","#"],
 };
+/* END GENERATED FONT */
 const BLANK = ["  ","  ","  ","  ","  "];
 const ROWS = 5;
 
@@ -618,7 +671,9 @@ function renderSplash(lines) {
 const splashEl = document.getElementById("splash");
 splashEl.textContent = renderSplash(["I CAN'T", "GET NO", "SLEEP"]);
 
-/* Pulse on the app's own cadence: it alternates every ~750ms while active. */
+/* Pulse on the app's own cadence: the splash alternates every 500 ms while active.
+   (750 ms is the tray icon's cadence, which is a different thing -- the page used to
+   quote that one next to the splash.) */
 const chipEl = document.getElementById("chip");
 let pulseOn = false;
 let pulseTimer = null;
@@ -631,7 +686,7 @@ function startPulse() {
   pulseTimer = setInterval(() => {
     pulseOn = !pulseOn;
     splashEl.dataset.state = pulseOn ? "pulse" : "on";
-  }, 750);
+  }, 500);
 }
 function stopPulse() {
   if (pulseTimer) { clearInterval(pulseTimer); pulseTimer = null; }
