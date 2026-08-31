@@ -1,0 +1,45 @@
+name: channels
+
+# Is every install method the README advertises actually serving the current release?
+#
+# Separate from release.yml on purpose: the Homebrew tap and the AUR package are moved
+# by hand after a release goes live, so folding this into the release run would make
+# every release red for the minutes in between. Here it is a standing question with a
+# yes/no answer, asked weekly and on demand.
+#
+# It exists because 0.1.2 shipped with `paru -S sleepless-bin` in the README and on the
+# website for a package that does not exist on the AUR -- committed locally, never
+# pushed, with no `origin/master` ref to make the absence visible. Offline checks can
+# only prove the pages agree with each other; whether a registry has the package is a
+# question you have to go and ask.
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version every channel should serve (blank = the latest release)'
+        required: false
+  schedule:
+    # Weekly. This goes red only when a channel is genuinely missing or behind, never
+    # for having nothing to do -- so it is a signal rather than noise.
+    - cron: '17 7 * * 1'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: channels
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Every advertised channel serves the current release
+        shell: bash
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          tools/check-channels.sh ${VERSION:+"$VERSION"}

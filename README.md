@@ -244,6 +244,10 @@ sleepless says so in the footer once, keeps running, and retries occasionally.
 
   The D-Bus liveness test needs `dbus-daemon`; without it that one test prints `SKIP`
   rather than failing.
+- `tools/check-channels.sh` — ask every install method the README advertises whether it
+  actually serves the current release. Run weekly by `.github/workflows/channels.yml`,
+  because the offline checks can only prove the pages agree with each other; whether a
+  registry has the package is a question you have to go and ask.
 - `tools/gen-site-font.py` — regenerate the website's block font from `src/art.rs`.
   `--check` is what CI runs; the site claims to use the program's own typeface, so it is
   generated rather than copied.
