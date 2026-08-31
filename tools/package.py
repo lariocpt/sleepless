@@ -24,6 +24,7 @@ import io
 import os
 import re
 import shutil
+import struct
 import subprocess
 import sys
 import tarfile
@@ -75,7 +76,7 @@ def check_toolchain() -> None:
         )
 
 
-def build_env() -> "dict[str, str]":
+def build_env(target: str) -> "dict[str, str]":
     """Make the compiler's output independent of where the build happened.
 
     A release binary embeds the source path of every panic site. Unremapped, a CI
@@ -92,6 +93,14 @@ def build_env() -> "dict[str, str]":
         f"--remap-path-prefix={ROOT}=/sleepless",
         f"--remap-path-prefix={cargo_home}=/cargo",
     ]
+    # The MSVC linker stamps the PE header with the wall clock, so two builds of one
+    # commit differ by the seconds between them -- which is exactly how the first
+    # rehearsal of this release failed, on both Windows targets and nothing else.
+    # /Brepro makes link.exe emit a fixed timestamp instead. verify_deterministic()
+    # below checks it actually took.
+    if target.endswith("-pc-windows-msvc"):
+        remaps.append("-Clink-arg=/Brepro")
+
     existing = env.get("CARGO_ENCODED_RUSTFLAGS")
     parts = (existing.split("\x1f") if existing else []) + remaps
     env["CARGO_ENCODED_RUSTFLAGS"] = "\x1f".join(parts)
@@ -103,12 +112,40 @@ def build_env() -> "dict[str, str]":
 def build(target: str, tool: str) -> Path:
     cmd = [tool, "build", "--release", "--locked", "--target", target]
     print("package.py:", " ".join(cmd))
-    subprocess.run(cmd, cwd=ROOT, check=True, env=build_env())
+    subprocess.run(cmd, cwd=ROOT, check=True, env=build_env(target))
     exe = BIN + (".exe" if "windows" in target else "")
     out = ROOT / "target" / target / "release" / exe
     if not out.is_file():
         die(f"{out} was not produced")
     return out
+
+
+# link.exe /Brepro writes this in place of every timestamp it would otherwise take
+# from the clock.
+BREPRO_STAMP = 0xFFFFFFFF
+
+
+def verify_deterministic(binary: Path, target: str) -> None:
+    """Refuse to package a binary that carries the time it was built.
+
+    A silent regression here is the worst kind: the archive still builds, still
+    installs, still runs, and only the reproducibility claim quietly stops being
+    true -- which nobody notices until someone tries to check a checksum.
+    """
+    if not target.endswith("-pc-windows-msvc"):
+        return
+    data = binary.read_bytes()
+    pe = struct.unpack_from("<I", data, 0x3C)[0]
+    if data[pe : pe + 4] != b"PE\0\0":
+        die(f"{binary} does not look like a PE image")
+    stamp = struct.unpack_from("<I", data, pe + 8)[0]
+    if stamp != BREPRO_STAMP:
+        die(
+            f"{binary.name} has PE TimeDateStamp {stamp} (0x{stamp:08x}), not the "
+            f"0x{BREPRO_STAMP:08x} that /Brepro writes -- the build embedded its own "
+            f"clock, so this archive would not reproduce"
+        )
+    print(f"package.py: {binary.name} carries no build timestamp")
 
 
 def members(binary: Path) -> "list[tuple[str, Path, int]]":
@@ -188,6 +225,7 @@ def main() -> int:
     )
     if not binary.is_file():
         die(f"{binary} is missing (--skip-build with nothing built?)")
+    verify_deterministic(binary, args.target)
 
     out = ROOT / args.out
     out.mkdir(parents=True, exist_ok=True)

@@ -207,9 +207,10 @@ jobs:
           {
             printf '\n### Verifying a download\n\n```sh\n'
             printf 'sha256sum -c sleepless-<target>-%s.sha256\n```\n\n' "$TAG"
-            printf 'Every archive is reproducible: rebuilding this tag with '
-            printf 'tools/package.py --target TARGET gives back the same bytes, and this '
-            printf 'workflow asserts that before the release goes live.\n'
+            printf 'Every archive here was rebuilt from this tag on a second machine and '
+            printf 'required to come out byte-identical before the release went live. To '
+            printf 'check one yourself without matching the build environment:\n\n'
+            printf '```sh\ngh attestation verify <archive> --repo %s\n```\n' "$GH_REPO"
           } >> "$notes"
 
           pre_flag='--prerelease=false'; [ "$PRE" = true ] && pre_flag='--prerelease'
