@@ -5,3 +5,6 @@
 /dist-b
 /rebuilt
 /published
+# `python3 -m compileall tools` in CI, and any local import of them
+__pycache__/
+*.pyc

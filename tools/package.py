@@ -121,9 +121,54 @@ def build(target: str, tool: str) -> Path:
     return out
 
 
-# Any Unix time in this window is a real clock reading rather than a hash: nothing
-# reproducible would land there by design, and a build cannot predate the project.
-CLOCK_WINDOW = (1577836800, 4102444800)  # 2020-01-01 .. 2100-01-01
+# IMAGE_DEBUG_TYPE_REPRO. link.exe /Brepro adds a debug directory entry of this type,
+# which is a fact about the file rather than a guess about a number.
+DEBUG_TYPE_REPRO = 16
+
+
+def _rva_to_offset(data: bytes, pe: int, rva: int) -> "int | None":
+    """Where a virtual address lives in the file, via the section table."""
+    n_sections = struct.unpack_from("<H", data, pe + 6)[0]
+    opt_size = struct.unpack_from("<H", data, pe + 20)[0]
+    sections = pe + 24 + opt_size
+    for i in range(n_sections):
+        sh = sections + i * 40
+        va = struct.unpack_from("<I", data, sh + 12)[0]
+        raw_size = struct.unpack_from("<I", data, sh + 16)[0]
+        raw_ptr = struct.unpack_from("<I", data, sh + 20)[0]
+        if va <= rva < va + max(raw_size, 1):
+            return raw_ptr + (rva - va)
+    return None
+
+
+def has_brepro_marker(data: bytes) -> bool:
+    """Was this PE linked with /Brepro?
+
+    Two earlier versions of this check guessed from the timestamp value and were
+    wrong in both directions: first it demanded 0xffffffff and link.exe wrote a hash,
+    then the "is this a clock reading" window was wide enough that a legitimate hash
+    (0xc60ff8d4, which reads as 2075) landed inside it. The linker records the fact
+    directly, so ask it instead of inferring it.
+    """
+    pe = struct.unpack_from("<I", data, 0x3C)[0]
+    if data[pe : pe + 4] != b"PE\0\0":
+        die("not a PE image")
+    magic = struct.unpack_from("<H", data, pe + 24)[0]
+    dd = pe + 24 + (112 if magic == 0x20B else 96)  # PE32+ vs PE32
+    n_dd = struct.unpack_from("<I", data, dd - 4)[0]
+    if n_dd < 7:
+        return False
+    rva, size = struct.unpack_from("<II", data, dd + 6 * 8)  # index 6 = Debug
+    if not rva or not size:
+        return False
+    off = _rva_to_offset(data, pe, rva)
+    if off is None:
+        return False
+    for i in range(size // 28):
+        entry_type = struct.unpack_from("<I", data, off + i * 28 + 12)[0]
+        if entry_type == DEBUG_TYPE_REPRO:
+            return True
+    return False
 
 
 def verify_deterministic(binary: Path, target: str) -> None:
@@ -131,29 +176,22 @@ def verify_deterministic(binary: Path, target: str) -> None:
 
     A silent regression here is the worst kind: the archive still builds, still
     installs, still runs, and only the reproducibility claim quietly stops being
-    true -- which nobody notices until someone tries to check a checksum.
-
-    `/Brepro` does not write a constant. link.exe replaces the timestamp with a hash
-    of the output, so the test is that the value cannot be a clock reading, not that
-    it equals any particular number. The authority on reproducibility is still the
-    release workflow's rebuild-and-compare; this is the cheap check that runs first
-    and names the cause.
+    true -- which nobody notices until someone tries to check a checksum. The
+    authority on reproducibility is still the release workflow's rebuild-and-compare;
+    this is the cheap check that runs first and names the cause.
     """
     if not target.endswith("-pc-windows-msvc"):
         return
     data = binary.read_bytes()
-    pe = struct.unpack_from("<I", data, 0x3C)[0]
-    if data[pe : pe + 4] != b"PE\0\0":
-        die(f"{binary} does not look like a PE image")
-    stamp = struct.unpack_from("<I", data, pe + 8)[0]
-    if CLOCK_WINDOW[0] <= stamp <= CLOCK_WINDOW[1]:
-        when = datetime.datetime.fromtimestamp(stamp, datetime.UTC)
+    if not has_brepro_marker(data):
+        pe = struct.unpack_from("<I", data, 0x3C)[0]
+        stamp = struct.unpack_from("<I", data, pe + 8)[0]
         die(
-            f"{binary.name} has PE TimeDateStamp {stamp} (0x{stamp:08x}), which reads "
-            f"as {when:%Y-%m-%d %H:%M:%SZ} -- the linker stamped it with the clock, so "
-            f"this archive would not reproduce. Did /Brepro stop being passed?"
+            f"{binary.name} has no /Brepro marker in its debug directory, so its "
+            f"PE TimeDateStamp (0x{stamp:08x}) is the build clock and this archive "
+            f"would not reproduce. Did -Clink-arg=/Brepro stop being passed?"
         )
-    print(f"package.py: {binary.name} carries no build timestamp (0x{stamp:08x})")
+    print(f"package.py: {binary.name} is linked /Brepro, so it carries no build clock")
 
 
 def members(binary: Path) -> "list[tuple[str, Path, int]]":
@@ -197,34 +235,50 @@ def write_zip(dest: Path, items) -> None:
 
 
 def self_test() -> int:
-    """Exercise verify_deterministic without needing a Windows build.
+    """Exercise the Windows guard without needing a Windows build.
 
-    /Brepro's replacement value is a hash, so the rule here is "this cannot be a
-    clock reading" rather than any particular constant -- which is a rule worth
-    testing, because getting it wrong in either direction is silent: too strict and
-    every Windows release fails, too loose and the check stops meaning anything.
+    Worth having as a test rather than a comment: this check has been wrong twice,
+    both times in the assertion rather than the flag. Getting it wrong is silent in
+    both directions -- too strict and every Windows release fails at build, too loose
+    and it stops meaning anything.
     """
     import tempfile
 
-    def fake_pe(stamp: int) -> Path:
-        data = bytearray(512)
-        data[0x3C:0x40] = struct.pack("<I", 0x80)
-        data[0x80:0x84] = b"PE\0\0"
-        data[0x88:0x8C] = struct.pack("<I", stamp)
-        p = Path(tempfile.mkstemp(suffix=".exe")[1])
-        p.write_bytes(bytes(data))
-        return p
+    def synthetic_pe(with_repro: bool) -> bytes:
+        """A PE32+ image with one section and a debug directory, and nothing else."""
+        pe = 0x80
+        sect_rva, sect_off, sect_size = 0x1000, 0x400, 0x200
+        dbg_rva = sect_rva
+        n_entries = 2 if with_repro else 1
+        data = bytearray(0x600)
+        struct.pack_into("<I", data, 0x3C, pe)
+        data[pe : pe + 4] = b"PE\0\0"
+        struct.pack_into("<H", data, pe + 4, 0x8664)          # Machine
+        struct.pack_into("<H", data, pe + 6, 1)               # NumberOfSections
+        struct.pack_into("<I", data, pe + 8, 0xC60FF8D4)      # the 2075-looking hash
+        struct.pack_into("<H", data, pe + 20, 240)            # SizeOfOptionalHeader
+        struct.pack_into("<H", data, pe + 24, 0x20B)          # PE32+
+        dd = pe + 24 + 112
+        struct.pack_into("<I", data, dd - 4, 16)              # NumberOfRvaAndSizes
+        struct.pack_into("<II", data, dd + 6 * 8, dbg_rva, n_entries * 28)
+        sh = pe + 24 + 240
+        data[sh : sh + 8] = b".rdata\0\0"
+        struct.pack_into("<I", data, sh + 12, sect_rva)
+        struct.pack_into("<I", data, sh + 16, sect_size)
+        struct.pack_into("<I", data, sh + 20, sect_off)
+        # Entry 0 is a CODEVIEW record; entry 1, when present, is the REPRO marker.
+        struct.pack_into("<I", data, sect_off + 12, 2)
+        if with_repro:
+            struct.pack_into("<I", data, sect_off + 28 + 12, DEBUG_TYPE_REPRO)
+        return bytes(data)
 
-    cases = [
-        (0x2A7E0E6F, True, "the hash link.exe /Brepro actually wrote"),
-        (0xFFFFFFFF, True, "the constant some linkers write instead"),
-        (1788202353, False, "a real clock reading, from an unfixed build"),
-        (CLOCK_WINDOW[0], False, "the near edge of the clock window"),
-        (CLOCK_WINDOW[1], False, "the far edge of the clock window"),
-    ]
     failures = 0
-    for stamp, want_ok, why in cases:
-        exe = fake_pe(stamp)
+    for with_repro, want_ok, why in [
+        (True, True, "linked with /Brepro"),
+        (False, False, "no marker, so the timestamp is the clock"),
+    ]:
+        exe = Path(tempfile.mkstemp(suffix=".exe")[1])
+        exe.write_bytes(synthetic_pe(with_repro))
         try:
             verify_deterministic(exe, "x86_64-pc-windows-msvc")
             got_ok = True
@@ -233,12 +287,17 @@ def self_test() -> int:
         finally:
             exe.unlink()
         if got_ok != want_ok:
-            print(f"  FAIL 0x{stamp:08x} ({why}): expected ok={want_ok}", file=sys.stderr)
+            print(f"  FAIL {why}: expected ok={want_ok}", file=sys.stderr)
             failures += 1
-    # And a non-Windows target is not inspected at all.
-    exe = fake_pe(1788202353)
-    verify_deterministic(exe, "x86_64-unknown-linux-musl")
+
+    # The value of the timestamp is deliberately not the test: 0xc60ff8d4 above is a
+    # real hash link.exe produced, and an earlier version of this check rejected it
+    # for reading as the year 2075.
+    exe = Path(tempfile.mkstemp(suffix=".exe")[1])
+    exe.write_bytes(synthetic_pe(False))
+    verify_deterministic(exe, "x86_64-unknown-linux-musl")  # not inspected at all
     exe.unlink()
+
     if failures:
         return 1
     print("package.py: self-test ok")
