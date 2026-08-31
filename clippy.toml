@@ -1,0 +1,3 @@
+# The MSRV clippy should lint against, so a suggestion that needs a newer compiler
+# than Cargo.toml's rust-version cannot be proposed. Kept equal to rust-version.
+msrv = "1.89"

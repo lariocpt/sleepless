@@ -13,7 +13,9 @@ use ratatui::widgets::Paragraph;
 pub fn draw(frame: &mut Frame, app: &App) {
     let area = frame.area();
     let active = app.active();
-    let pulse_bright = app.pulse && active && app.tick % 4 < 2;
+    let pulse_bright = app.pulse
+        && active
+        && app.tick % crate::run::SPLASH_PULSE_TICKS < crate::run::SPLASH_PULSE_TICKS / 2;
     let (c_active, c_pulse, c_paused) = app
         .splash()
         .map(|s| (s.color, s.pulse_color, s.paused_color))

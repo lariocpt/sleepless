@@ -98,6 +98,46 @@ mod imp {
         "org.freedesktop.ScreenSaver",
     );
 
+    const LOGIND: (&str, &str, &str) = (
+        "org.freedesktop.login1",
+        "/org/freedesktop/login1",
+        "org.freedesktop.login1.Manager",
+    );
+
+    /// Which unique bus name owned a well-known name when we took a lock from it.
+    ///
+    /// This is the whole of the liveness check, and it exists because losing a lock
+    /// is silent. If the compositor or logind restarts, the cookie names a session
+    /// that no longer exists and the pipe fd has nobody on the other end -- but our
+    /// connection stays up and the fd stays valid, so `guard.is_some()` kept the
+    /// banner green and the retry path never ran, because it only fires when there
+    /// is no guard at all. A restarted service takes a new unique name, so
+    /// comparing owners catches exactly that.
+    fn name_owner(conn: &Connection, name: &str) -> Option<String> {
+        conn.call_method(
+            Some("org.freedesktop.DBus"),
+            "/org/freedesktop/DBus",
+            Some("org.freedesktop.DBus"),
+            "GetNameOwner",
+            &(name,),
+        )
+        .ok()?
+        .body()
+        .deserialize::<String>()
+        .ok()
+    }
+
+    /// Is a lock taken from `recorded` still held, now that the name is owned by
+    /// `current`? An owner that could not be read at acquire time is never treated
+    /// as lost: dropping a working lock because the bookkeeping is missing would be
+    /// worse than the bug this catches.
+    fn still_owned(recorded: Option<&str>, current: Option<&str>) -> bool {
+        match recorded {
+            None => true,
+            Some(r) => current == Some(r),
+        }
+    }
+
     /// Both bus connections, made once at startup. Either may be missing — and so
     /// may both: a bare TTY, a container or a non-systemd box still gets a running
     /// app that says `✗ NOT INHIBITING`, rather than a refusal to start.
@@ -135,18 +175,46 @@ mod imp {
     struct ScreenSaverLock {
         conn: Connection,
         cookie: u32,
+        owner: Option<String>,
+    }
+
+    struct LogindLock {
+        conn: Connection,
+        /// The lock lasts exactly as long as this fd is open. Never touched again;
+        /// dropping it, or dying, is what releases it.
+        _fd: OwnedFd,
+        owner: Option<String>,
     }
 
     /// RAII: dropping releases everything immediately; dying releases it anyway.
     pub struct InhibitGuard {
         screensaver: Option<ScreenSaverLock>,
-        _logind: Option<OwnedFd>,
+        logind: Option<LogindLock>,
         status: LockStatus,
     }
 
     impl InhibitGuard {
         pub fn status(&self) -> &LockStatus {
             &self.status
+        }
+
+        /// Is every lock this guard claims to hold still real?
+        ///
+        /// False means the owning service restarted, so the caller drops the guard
+        /// and re-acquires. Re-acquiring records the new owners, and only claims
+        /// what it actually got -- so a provider that is permanently gone settles
+        /// into a guard that no longer mentions it, rather than churning.
+        pub fn is_live(&self) -> bool {
+            let ok = |conn: &Connection, name: &str, owner: &Option<String>| {
+                still_owned(owner.as_deref(), name_owner(conn, name).as_deref())
+            };
+            self.screensaver
+                .as_ref()
+                .is_none_or(|l| ok(&l.conn, SCREENSAVER.0, &l.owner))
+                && self
+                    .logind
+                    .as_ref()
+                    .is_none_or(|l| ok(&l.conn, LOGIND.0, &l.owner))
         }
     }
 
@@ -178,9 +246,9 @@ mod imp {
 
     fn logind_inhibit(conn: &Connection, what: &str, why: &str) -> Result<OwnedFd, zbus::Error> {
         let reply = conn.call_method(
-            Some("org.freedesktop.login1"),
-            "/org/freedesktop/login1",
-            Some("org.freedesktop.login1.Manager"),
+            Some(LOGIND.0),
+            LOGIND.1,
+            Some(LOGIND.2),
             "Inhibit",
             &(what, "sleepless", why, "block"),
         )?;
@@ -204,6 +272,7 @@ mod imp {
                     Ok(cookie) => {
                         status.idle = true;
                         Some(ScreenSaverLock {
+                            owner: name_owner(conn, SCREENSAVER.0),
                             conn: conn.clone(),
                             cookie,
                         })
@@ -222,7 +291,7 @@ mod imp {
             } else {
                 "sleep:idle"
             };
-            match logind_inhibit(conn, what, why) {
+            let fd = match logind_inhibit(conn, what, why) {
                 Ok(fd) => {
                     status.sleep = true;
                     status.lid = lid;
@@ -248,7 +317,12 @@ mod imp {
                     status.notes.push(format!("logind inhibit failed: {e}"));
                     None
                 }
-            }
+            };
+            fd.map(|fd| LogindLock {
+                owner: name_owner(conn, LOGIND.0),
+                conn: conn.clone(),
+                _fd: fd,
+            })
         });
 
         if screensaver.is_none() && logind.is_none() {
@@ -259,9 +333,122 @@ mod imp {
         }
         Ok(InhibitGuard {
             screensaver,
-            _logind: logind,
+            logind,
             status,
         })
+    }
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+        use std::io::{BufRead, BufReader};
+        use std::process::{Child, Command, Stdio};
+        use std::time::{Duration, Instant};
+
+        #[test]
+        fn still_owned_rules() {
+            assert!(
+                still_owned(Some(":1.7"), Some(":1.7")),
+                "same owner: still ours"
+            );
+            assert!(
+                !still_owned(Some(":1.7"), Some(":1.9")),
+                "restarted service: a new unique name, so the lock is gone"
+            );
+            assert!(
+                !still_owned(Some(":1.7"), None),
+                "nobody owns it: the lock is gone"
+            );
+            // Never churn a working lock over bookkeeping we failed to record.
+            assert!(still_owned(None, None));
+            assert!(still_owned(None, Some(":1.9")));
+        }
+
+        struct Daemon(Child);
+        impl Drop for Daemon {
+            fn drop(&mut self) {
+                let _ = self.0.kill();
+                let _ = self.0.wait();
+            }
+        }
+
+        /// A private session bus, or None when dbus-daemon is not installed. A build
+        /// host without D-Bus announces a skip rather than failing: this layer is
+        /// about the bus, and "no bus here" is not a broken lock.
+        fn private_bus() -> Option<(Daemon, String)> {
+            let mut child = Command::new("dbus-daemon")
+                .args(["--session", "--nofork", "--print-address"])
+                .stdout(Stdio::piped())
+                .stderr(Stdio::null())
+                .spawn()
+                .ok()?;
+            let mut line = String::new();
+            BufReader::new(child.stdout.take()?)
+                .read_line(&mut line)
+                .ok()?;
+            let addr = line.trim().to_string();
+            if addr.is_empty() {
+                return None;
+            }
+            Some((Daemon(child), addr))
+        }
+
+        struct StubScreenSaver;
+
+        #[zbus::interface(name = "org.freedesktop.ScreenSaver")]
+        impl StubScreenSaver {
+            fn inhibit(&self, _app: &str, _why: &str) -> u32 {
+                42
+            }
+            fn un_inhibit(&self, _cookie: u32) {}
+        }
+
+        #[test]
+        fn a_lock_stops_being_live_when_its_owner_goes_away() {
+            let Some((_daemon, addr)) = private_bus() else {
+                eprintln!("SKIP: dbus-daemon is not installed");
+                return;
+            };
+            let connect = |b: zbus::blocking::connection::Builder<'_>| b.build().unwrap();
+
+            let provider = connect(
+                zbus::blocking::connection::Builder::address(addr.as_str())
+                    .unwrap()
+                    .name(SCREENSAVER.0)
+                    .unwrap()
+                    .serve_at(SCREENSAVER.1, StubScreenSaver)
+                    .unwrap(),
+            );
+            let client =
+                connect(zbus::blocking::connection::Builder::address(addr.as_str()).unwrap());
+
+            // A real Inhibit call against a real bus, exactly as acquire() makes it.
+            let cookie = screensaver_inhibit(&client, "testing").expect("stub should answer");
+            let owner = name_owner(&client, SCREENSAVER.0);
+            assert!(owner.is_some(), "the provider owns the name");
+
+            let guard = InhibitGuard {
+                screensaver: Some(ScreenSaverLock {
+                    conn: client.clone(),
+                    cookie,
+                    owner,
+                }),
+                logind: None,
+                status: LockStatus::default(),
+            };
+            assert!(guard.is_live(), "the provider is still there");
+
+            // The provider goes away -- a compositor restart, from our side. Nothing
+            // tells us: our connection is fine and the cookie is still a number.
+            drop(provider);
+            let deadline = Instant::now() + Duration::from_secs(5);
+            while guard.is_live() && Instant::now() < deadline {
+                std::thread::sleep(Duration::from_millis(25));
+            }
+            assert!(
+                !guard.is_live(),
+                "a lock whose owner has gone must not keep reporting itself held"
+            );
+        }
     }
 }
 
@@ -311,6 +498,13 @@ mod imp {
     impl InhibitGuard {
         pub fn status(&self) -> &LockStatus {
             &self.status
+        }
+
+        /// Always true here: an IOPMAssertion and a thread execution state belong
+        /// to this process and cannot be revoked out from under it the way a D-Bus
+        /// name can. They end when the process does, which is the point.
+        pub fn is_live(&self) -> bool {
+            true
         }
     }
 
@@ -386,6 +580,11 @@ mod imp {
         pub fn status(&self) -> &LockStatus {
             &self.status
         }
+
+        /// Unreachable: `acquire` never returns a guard on this platform.
+        pub fn is_live(&self) -> bool {
+            true
+        }
     }
 
     pub fn acquire(_buses: &Buses, _lid: bool, _why: &str) -> Result<InhibitGuard> {
@@ -400,3 +599,4 @@ pub use imp::{Buses, InhibitGuard, acquire};
 const _: fn() -> Buses = Buses::connect;
 const _: fn(&Buses, bool, &str) -> anyhow::Result<InhibitGuard> = acquire;
 const _: fn(&InhibitGuard) -> &LockStatus = InhibitGuard::status;
+const _: fn(&InhibitGuard) -> bool = InhibitGuard::is_live;

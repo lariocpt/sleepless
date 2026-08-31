@@ -29,9 +29,8 @@ impl Splash {
         match &self.source {
             SplashSource::Text(lines) => pick_text(lines, width, height),
             SplashSource::Art(lines) => {
-                let w = lines.iter().map(|l| l.chars().count()).max().unwrap_or(0) as u16;
-                let h = lines.len() as u16;
-                (width >= w + 2 && height >= h + CHROME_ROWS).then(|| lines.clone())
+                let w = lines.iter().map(|l| l.chars().count()).max().unwrap_or(0);
+                fits(width, height, w, lines.len()).then(|| lines.clone())
             }
         }
     }
@@ -50,7 +49,32 @@ const ROWS: usize = 5;
 /// Rows below the art (banner, status, power, footer, spacing).
 const CHROME_ROWS: u16 = 6;
 
-fn glyph(c: char) -> &'static [&'static str; ROWS] {
+/// Does `w` x `h` cells of art fit a `width` x `height` terminal with room left for
+/// the chrome?
+///
+/// Done by widening the terminal rather than narrowing the art. `art_file` is an
+/// arbitrary file, so `w as u16 + 2` was two bugs at once: it panics in a debug
+/// build past 65533 columns, and in release it wraps -- a 70 000-column line came
+/// out as 4464 and "fitted" an 80-column terminal.
+fn fits(width: u16, height: u16, w: usize, h: usize) -> bool {
+    width as usize >= w.saturating_add(2) && height as usize >= h + CHROME_ROWS as usize
+}
+
+/// Every character the block font has a real glyph for. The README documents this
+/// set and `tests/docs.rs` asserts the two agree, because the set is invisible from
+/// the outside: an unsupported character renders as a blank rather than failing, so
+/// documenting one that does not exist looks exactly like documenting one that does.
+pub const SUPPORTED: &str = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'-!?.";
+
+/// What an unsupported character renders as: right for a space, harmless elsewhere.
+const BLANK: &[&str; ROWS] = &["  ", "  ", "  ", "  ", "  "];
+
+/// Does the block font have a glyph for `c`?
+pub fn has_glyph(c: char) -> bool {
+    glyph(c) != BLANK
+}
+
+pub fn glyph(c: char) -> &'static [&'static str; ROWS] {
     match c.to_ascii_uppercase() {
         'A' => &[" ### ", "#   #", "#####", "#   #", "#   #"],
         'B' => &["#### ", "#   #", "#### ", "#   #", "#### "],
@@ -93,7 +117,7 @@ fn glyph(c: char) -> &'static [&'static str; ROWS] {
         '!' => &["#", "#", "#", " ", "#"],
         '?' => &[" ### ", "#   #", "  ## ", "     ", "  #  "],
         '.' => &[" ", " ", " ", " ", "#"],
-        _ => &["  ", "  ", "  ", "  ", "  "], // space and anything unknown
+        _ => BLANK, // space and anything unknown
     }
 }
 
@@ -134,9 +158,8 @@ fn pick_text(lines: &[String], width: u16, height: u16) -> Option<Vec<String>> {
             .iter()
             .map(|l| l.chars().count())
             .max()
-            .unwrap_or(0) as u16;
-        let h = rendered.len() as u16;
-        if width >= w + 2 && height >= h + CHROME_ROWS {
+            .unwrap_or(0);
+        if fits(width, height, w, rendered.len()) {
             return Some(rendered);
         }
     }
@@ -172,6 +195,27 @@ mod tests {
     }
 
     #[test]
+    fn the_supported_set_is_exactly_what_has_glyphs() {
+        // SUPPORTED is a second spelling of the match arms below it, and the README
+        // is a third. This ties the first two together; tests/docs.rs ties in the
+        // README.
+        for c in SUPPORTED.chars() {
+            assert!(has_glyph(c), "SUPPORTED lists {c:?}, which has no glyph");
+        }
+        for c in " ~@#$%^&*()_+=[]{}|;:,<>/\\\"".chars() {
+            assert!(!has_glyph(c), "{c:?} is not in SUPPORTED but has a glyph");
+        }
+        assert_eq!(
+            SUPPORTED.chars().count(),
+            SUPPORTED
+                .chars()
+                .collect::<std::collections::BTreeSet<_>>()
+                .len(),
+            "SUPPORTED has a duplicate"
+        );
+    }
+
+    #[test]
     fn all_supported_glyphs_are_consistent() {
         for c in ('A'..='Z').chain('0'..='9').chain("'-!?. ~".chars()) {
             let g = glyph(c);
@@ -194,6 +238,40 @@ mod tests {
         assert_eq!(rows.len(), ROWS);
         let widths: Vec<_> = rows.iter().map(|r| r.chars().count()).collect();
         assert!(widths.iter().all(|w| *w == widths[0]), "ragged: {widths:?}");
+    }
+
+    #[test]
+    fn oversized_art_never_fits_and_never_panics() {
+        // An art_file is whatever the user points at. The fit check used to cast the
+        // widest line to u16 and add 2: past 65533 columns that panics in debug, and
+        // in release it wraps, so a 70 000-column line "fitted" an 80-column terminal.
+        let huge = Splash {
+            name: "huge".into(),
+            source: SplashSource::Art(vec!["#".repeat(70_000)]),
+            color: Color::Green,
+            pulse_color: Color::LightGreen,
+            paused_color: Color::DarkGray,
+        };
+        assert!(
+            huge.render(80, 40).is_none(),
+            "a 70k-column line cannot fit 80"
+        );
+        assert!(huge.render(u16::MAX, u16::MAX).is_none());
+
+        let tall = Splash {
+            name: "tall".into(),
+            source: SplashSource::Art(vec!["#".into(); 70_000]),
+            color: Color::Green,
+            pulse_color: Color::LightGreen,
+            paused_color: Color::DarkGray,
+        };
+        assert!(tall.render(80, 40).is_none(), "70k rows cannot fit 40");
+        assert!(tall.render(u16::MAX, u16::MAX).is_none());
+
+        // And the exact boundary is still right for ordinary art.
+        assert!(fits(10, 10, 8, 4), "8+2 columns in 10, 4+6 rows in 10");
+        assert!(!fits(9, 10, 8, 4), "one column short");
+        assert!(!fits(10, 9, 8, 4), "one row short");
     }
 
     #[test]

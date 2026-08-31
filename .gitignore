@@ -1,1 +1,7 @@
 /target
+# tools/package.py output, and the two copies ci.yml builds to compare
+/dist
+/dist-a
+/dist-b
+/rebuilt
+/published

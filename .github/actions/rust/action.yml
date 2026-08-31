@@ -1,0 +1,37 @@
+name: rust
+description: >
+  Install the toolchain pinned by .rust-version, plus any targets and components.
+  Pinned rather than `stable`, because `cargo fmt --check` and `clippy -D warnings`
+  both fail on a new compiler release with no source change -- and because a release
+  archive only reproduces under the compiler that built it. Bumping .rust-version is
+  a deliberate pull request, which is where new lints belong.
+
+inputs:
+  toolchain:
+    description: Override the pin (the MSRV job needs an older one).
+    default: ''
+  targets:
+    description: Space-separated target triples.
+    default: ''
+  components:
+    description: Space-separated rustup components.
+    default: ''
+
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        OVERRIDE: ${{ inputs.toolchain }}
+        TARGETS: ${{ inputs.targets }}
+        COMPONENTS: ${{ inputs.components }}
+      run: |
+        set -euo pipefail
+        tc="${OVERRIDE:-$(tr -d '[:space:]' < .rust-version)}"
+        args=(--profile minimal --no-self-update)
+        for c in $COMPONENTS; do args+=(--component "$c"); done
+        for t in $TARGETS; do args+=(--target "$t"); done
+        rustup toolchain install "$tc" "${args[@]}"
+        rustup default "$tc"
+        rustc --version
+        cargo --version

@@ -9,6 +9,7 @@ use crate::art::{Splash, SplashSource};
 use ratatui::style::Color;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 
 #[derive(Debug, Default, Deserialize)]
 pub struct FileConfig {
@@ -77,7 +78,12 @@ pub fn state_path() -> Option<PathBuf> {
         home_dir(),
         &[".local", "state"],
     );
-    Some(base?.join("sleepless").join("state.toml"))
+    Some(app_file(base?, "state.toml"))
+}
+
+/// The layout under whichever base directory the platform gives us.
+fn app_file(base: PathBuf, name: &str) -> PathBuf {
+    base.join("sleepless").join(name)
 }
 
 /// Pure part of the path rules, so they can be tested without mutating the
@@ -135,6 +141,80 @@ fn save_state_to(path: &Path, state: &State) -> std::io::Result<()> {
     std::fs::rename(&tmp, path)
 }
 
+/// Forget the saved runtime settings (`--reset-state`). A missing file is success:
+/// the flag asks to end up with no saved state, not to prove there was some.
+pub fn clear_state() -> std::io::Result<()> {
+    let Some(path) = state_path() else {
+        return Ok(());
+    };
+    clear_state_at(&path)
+}
+
+fn clear_state_at(path: &Path) -> std::io::Result<()> {
+    match std::fs::remove_file(path) {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        r => r,
+    }
+}
+
+/// How long to wait before retrying a state write that failed.
+const SAVE_RETRY: Duration = Duration::from_secs(30);
+
+/// Writes [`State`] when it changes, and not otherwise.
+///
+/// The failure path is why this is a type rather than three lines in the loop. The
+/// event loop runs four times a second, and leaving the last-written value untouched
+/// after an error meant a read-only state directory produced four failed writes a
+/// second for as long as the program ran, behind a single warning shown once.
+pub struct StateWriter {
+    saved: State,
+    retry_at: Option<Instant>,
+    warned: bool,
+}
+
+impl StateWriter {
+    /// Seeded with the state at startup, so nothing is written to disk until the
+    /// user actually changes something.
+    pub fn new(current: State) -> Self {
+        Self {
+            saved: current,
+            retry_at: None,
+            warned: false,
+        }
+    }
+
+    /// Persist `want` if it differs from what was last written successfully.
+    /// Returns a message to show the user exactly once, the first time a write fails.
+    ///
+    /// `write` is a parameter so the failure path is testable without having to
+    /// arrange an unwritable directory on every platform CI runs.
+    pub fn sync(
+        &mut self,
+        now: Instant,
+        want: &State,
+        write: impl FnOnce(&State) -> std::io::Result<()>,
+    ) -> Option<String> {
+        if *want == self.saved || self.retry_at.is_some_and(|t| now < t) {
+            return None;
+        }
+        match write(want) {
+            Ok(()) => {
+                self.saved = want.clone();
+                self.retry_at = None;
+                None
+            }
+            Err(e) => {
+                self.retry_at = Some(now + SAVE_RETRY);
+                if std::mem::replace(&mut self.warned, true) {
+                    None
+                } else {
+                    Some(format!("state: settings won't persist: {e}"))
+                }
+            }
+        }
+    }
+}
+
 /// `$XDG_CONFIG_HOME` (Unix) or `%APPDATA%` (Windows). See [`state_path`] for
 /// why this is an `Option` rather than a fallback to `.`.
 ///
@@ -149,7 +229,7 @@ pub fn config_path() -> Option<PathBuf> {
         home_dir(),
         &[".config"],
     );
-    Some(base?.join("sleepless").join("config.toml"))
+    Some(app_file(base?, "config.toml"))
 }
 
 pub fn load() -> Loaded {
@@ -163,7 +243,10 @@ pub fn load() -> Loaded {
     let file = match std::fs::read_to_string(&path) {
         Err(_) => FileConfig::default(), // no config file is fine
         Ok(s) => match toml::from_str(&s) {
-            Ok(c) => c,
+            Ok(c) => {
+                warn_unknown_keys(&s, &mut warnings);
+                c
+            }
             Err(e) => {
                 warnings.push(format!("config: {}: {e}", path.display()));
                 FileConfig::default()
@@ -178,6 +261,60 @@ pub fn load() -> Loaded {
         ));
     }
     Loaded { file, warnings }
+}
+
+/// Keys this program understands, and the reason it does not use
+/// `deny_unknown_fields`: that would make a typo fatal, and a config file must
+/// never stop the machine from staying awake. serde's own default is the opposite
+/// failure -- a misspelled `inhibit_lid` did exactly nothing and said nothing, in a
+/// file whose documented contract is that bad entries warn. So the raw table is
+/// diffed against these lists and anything unrecognised is reported and ignored.
+pub const KNOWN_TOP: &[&str] = &[
+    "mode",
+    "inhibit_lid",
+    "tray",
+    "pulse",
+    "why",
+    "splash",
+    "splashes",
+];
+pub const KNOWN_SPLASH: &[&str] = &[
+    "name",
+    "text",
+    "art",
+    "art_file",
+    "color",
+    "pulse_color",
+    "paused_color",
+];
+
+fn warn_unknown_keys(src: &str, warnings: &mut Vec<String>) {
+    let Ok(table) = src.parse::<toml::Table>() else {
+        return; // already reported by the typed parse
+    };
+    for k in table.keys() {
+        if !KNOWN_TOP.contains(&k.as_str()) {
+            warnings.push(format!("config: unknown key {k:?} (ignored)"));
+        }
+    }
+    let Some(splashes) = table.get("splashes").and_then(|v| v.as_array()) else {
+        return;
+    };
+    for (i, def) in splashes.iter().enumerate() {
+        let Some(t) = def.as_table() else { continue };
+        let name = t
+            .get("name")
+            .and_then(|v| v.as_str())
+            .map(str::to_string)
+            .unwrap_or_else(|| format!("splash-{}", i + 1));
+        for k in t.keys() {
+            if !KNOWN_SPLASH.contains(&k.as_str()) {
+                warnings.push(format!(
+                    "config: splash {name:?}: unknown key {k:?} (ignored)"
+                ));
+            }
+        }
+    }
 }
 
 /// Built-in splashes followed by the ones from the config file.
@@ -348,6 +485,7 @@ const COFFEE: &str = r"
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::cell::Cell;
 
     #[test]
     fn parses_full_config() {
@@ -469,15 +607,198 @@ color = "chartreuse-ish"
 
     #[test]
     fn real_paths_end_in_the_app_dir() {
-        // Whatever the platform resolves to, the tail must be stable.
-        if let Some(p) = config_path() {
-            assert!(p.is_absolute(), "{p:?} should be absolute");
-            assert!(p.ends_with("sleepless/config.toml"), "{p:?}");
+        // This used to be two `if let Some(p)` arms, which asserted nothing at all
+        // on a host where neither HOME nor XDG_*/APPDATA resolved -- a test that
+        // passes by having nothing to check. The layout is now checked against an
+        // injected base, unconditionally...
+        let base = PathBuf::from(if cfg!(windows) { "C:\\base" } else { "/base" });
+        for (name, tail) in [("config.toml", "config.toml"), ("state.toml", "state.toml")] {
+            let p = app_file(base.clone(), name);
+            assert!(p.ends_with(PathBuf::from("sleepless").join(tail)), "{p:?}");
         }
-        if let Some(p) = state_path() {
+
+        // ...and the real functions are then required to resolve. Every machine
+        // that can run this test has HOME (or APPDATA/LOCALAPPDATA) set, so "both
+        // resolved to nothing" means the resolution is broken, not absent.
+        let mut checked = 0;
+        for p in [config_path(), state_path()].into_iter().flatten() {
             assert!(p.is_absolute(), "{p:?} should be absolute");
-            assert!(p.ends_with("sleepless/state.toml"), "{p:?}");
+            assert!(
+                p.parent().is_some_and(|d| d.ends_with("sleepless")),
+                "{p:?}"
+            );
+            checked += 1;
         }
+        assert_eq!(
+            checked, 2,
+            "config_path()/state_path() resolved to nothing -- set HOME, XDG_*_HOME or %APPDATA%"
+        );
+    }
+
+    #[test]
+    fn clearing_state_is_idempotent() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("state.toml");
+        // Missing file is success: --reset-state asks to end with no saved state.
+        clear_state_at(&path).expect("clearing a missing file should succeed");
+        save_state_to(&path, &State::default()).unwrap();
+        assert!(path.exists());
+        clear_state_at(&path).unwrap();
+        assert!(!path.exists());
+        clear_state_at(&path).expect("clearing twice should succeed");
+    }
+
+    #[test]
+    fn state_writer_only_writes_on_change() {
+        let start = State::default();
+        let mut w = StateWriter::new(start.clone());
+        let now = Instant::now();
+        let writes = Cell::new(0);
+        let count = |_: &State| {
+            writes.set(writes.get() + 1);
+            Ok(())
+        };
+        assert!(w.sync(now, &start, count).is_none());
+        assert_eq!(writes.get(), 0, "the startup state is already on disk");
+
+        let changed = State {
+            splash: Some("coffee".into()),
+            ..Default::default()
+        };
+        assert!(w.sync(now, &changed, count).is_none());
+        assert_eq!(writes.get(), 1);
+        // Same value again: nothing to do.
+        assert!(w.sync(now, &changed, count).is_none());
+        assert_eq!(writes.get(), 1);
+    }
+
+    #[test]
+    fn a_failing_state_write_warns_once_and_backs_off() {
+        // The regression: the loop runs four times a second and the failed value was
+        // never recorded, so an unwritable state dir meant four failed writes a
+        // second forever, behind a single warning shown once.
+        let mut w = StateWriter::new(State::default());
+        let t0 = Instant::now();
+        let want = State {
+            splash: Some("coffee".into()),
+            ..Default::default()
+        };
+        let attempts = Cell::new(0);
+        let fail = |_: &State| {
+            attempts.set(attempts.get() + 1);
+            Err(std::io::Error::from(std::io::ErrorKind::PermissionDenied))
+        };
+
+        let first = w.sync(t0, &want, fail);
+        assert!(
+            first.is_some_and(|m| m.contains("won't persist")),
+            "the first failure warns"
+        );
+        assert_eq!(attempts.get(), 1);
+
+        // Every frame for the next 30 s: no second warning, and no syscall either.
+        for ms in [250, 500, 29_000] {
+            assert!(
+                w.sync(t0 + Duration::from_millis(ms), &want, fail)
+                    .is_none()
+            );
+        }
+        assert_eq!(
+            attempts.get(),
+            1,
+            "backed off instead of retrying every frame"
+        );
+
+        // After the backoff it tries again, and still says nothing further.
+        assert!(w.sync(t0 + SAVE_RETRY, &want, fail).is_none());
+        assert_eq!(attempts.get(), 2, "retries once the backoff expires");
+    }
+
+    #[test]
+    fn state_writer_recovers_after_the_directory_becomes_writable() {
+        let mut w = StateWriter::new(State::default());
+        let t0 = Instant::now();
+        let want = State {
+            splash: Some("coffee".into()),
+            ..Default::default()
+        };
+        assert!(
+            w.sync(t0, &want, |_| Err(std::io::Error::other("nope")))
+                .is_some()
+        );
+        assert!(w.sync(t0 + SAVE_RETRY, &want, |_| Ok(())).is_none());
+        // Written now, so an unchanged value must not be written again.
+        let writes = Cell::new(0);
+        w.sync(t0 + SAVE_RETRY * 2, &want, |_| {
+            writes.set(writes.get() + 1);
+            Ok(())
+        });
+        assert_eq!(writes.get(), 0);
+    }
+
+    #[test]
+    fn unknown_keys_warn_and_are_ignored() {
+        // serde ignores what it does not know, so this used to be silent: a typo had
+        // no effect and produced no complaint.
+        let mut warnings = Vec::new();
+        warn_unknown_keys(
+            r#"
+mode = "always"
+inhibitlid = true
+
+[[splashes]]
+name = "hello"
+text = ["HI"]
+colour = "green"
+"#,
+            &mut warnings,
+        );
+        assert_eq!(warnings.len(), 2, "{warnings:?}");
+        assert!(
+            warnings.iter().any(|w| w.contains("\"inhibitlid\"")),
+            "{warnings:?}"
+        );
+        assert!(
+            warnings
+                .iter()
+                .any(|w| w.contains("\"hello\"") && w.contains("\"colour\"")),
+            "{warnings:?}"
+        );
+    }
+
+    #[test]
+    fn every_known_key_is_actually_accepted() {
+        // KNOWN_TOP/KNOWN_SPLASH are a second list of the fields on FileConfig and
+        // SplashDef, so they can drift. A config using all of them must parse and
+        // must produce no warning at all.
+        let src = r#"
+mode = "always"
+inhibit_lid = false
+tray = true
+pulse = true
+why = "because"
+splash = "coffee"
+
+[[splashes]]
+name = "hello"
+text = ["HI"]
+color = "green"
+pulse_color = "lightgreen"
+paused_color = "darkgray"
+"#;
+        let cfg: FileConfig = toml::from_str(src).expect("every known key must deserialize");
+        let mut warnings = Vec::new();
+        warn_unknown_keys(src, &mut warnings);
+        assert!(warnings.is_empty(), "{warnings:?}");
+        // `art` and `art_file` are the two alternatives to `text`, checked separately
+        // because a splash takes exactly one of the three.
+        for alt in ["art = \"x\"", "art_file = \"/tmp/x\""] {
+            let src = format!("[[splashes]]\nname = \"a\"\n{alt}\n");
+            let mut warnings = Vec::new();
+            warn_unknown_keys(&src, &mut warnings);
+            assert!(warnings.is_empty(), "{alt}: {warnings:?}");
+        }
+        assert_eq!(cfg.splashes.len(), 1);
     }
 
     #[test]
