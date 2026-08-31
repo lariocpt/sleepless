@@ -168,8 +168,14 @@ def main() -> int:
     tag = args.tag or f"v{cargo_version()}"
     if not tag.startswith("v"):
         die(f"tag {tag!r} should start with 'v'; the archive names embed it")
-    if tag[1:] != cargo_version():
-        die(f"tag {tag} does not match Cargo.toml version {cargo_version()}")
+    # A `-rc.N` tag rehearses the release it is a candidate for, and the binary it
+    # packages reports that release's version -- so the BASE is what must match.
+    # Comparing the whole tag made every prerelease unbuildable, which would have been
+    # found the first time the rehearsal the release workflow documents was actually
+    # attempted.
+    base = tag[1:].split("-", 1)[0]
+    if base != cargo_version():
+        die(f"tag {tag} claims {base}, Cargo.toml says {cargo_version()}")
 
     if not args.no_check_toolchain:
         check_toolchain()
