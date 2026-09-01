@@ -4,6 +4,7 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
   # release.yml calls this, so the gate in front of a tag is literally this file
   # rather than a copy of it that can drift. A tag push triggers neither of the
   # events above, so without this the one path to the public would be the one path
@@ -214,20 +215,30 @@ jobs:
         shell: pwsh
         run: pwsh test/smoke.ps1 .\target\debug\sleepless.exe
 
-      # The archive the release publishes must not depend on the machine that built
-      # it. Two builds here, compared -- the release workflow repeats it against the
-      # published bytes.
-      - name: The archive reproduces
-        if: runner.os == 'Linux'
+      # Packaging, on every OS -- not just Linux, which is what this used to say.
+      #
+      # The two things being checked here are the ones that only ever failed at
+      # release time: that the archive does not depend on the machine that built it
+      # (umask, mtimes, ownership, member order), and on Windows that the binary
+      # carries no build clock. That /Brepro guard cost two rehearsal tags to get
+      # right precisely because no pull request ever ran it -- the release workflow
+      # was the first thing that did.
+      #
+      # Not oversold: cargo caches the release build between the two calls, so this
+      # proves the ARCHIVING is deterministic and the guard is satisfied. That the
+      # COMPILATION is deterministic is a different question, answered by the release
+      # workflow rebuilding each tag on a second machine.
+      - name: The archive reproduces, and carries no build clock
         shell: bash
         run: |
           set -euo pipefail
+          py=$(command -v python3 || command -v python)
           target=$(rustc -vV | sed -n 's/^host: //p')
           rustup target add "$target"
-          ( umask 022; tools/package.py --target "$target" --out dist-a )
-          ( umask 077; tools/package.py --target "$target" --out dist-b )
+          ( umask 022; "$py" tools/package.py --target "$target" --out dist-a )
+          ( umask 077; "$py" tools/package.py --target "$target" --out dist-b )
           a=$(cut -d' ' -f1 dist-a/*.sha256)
           b=$(cut -d' ' -f1 dist-b/*.sha256)
           [ "$a" = "$b" ] || { echo "::error::the archive is not reproducible: $a vs $b"; exit 1; }
           ( cd dist-a && sha256sum -c ./*.sha256 )
-          echo "reproducible: $a"
+          echo "reproducible on $target: $a"
