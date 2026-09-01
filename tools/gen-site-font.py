@@ -79,7 +79,9 @@ def main() -> int:
     if check:
         print("FAIL: docs/index.html font is stale -- run tools/gen-site-font.py", file=sys.stderr)
         return 1
-    SITE.write_text(updated)
+    # newline="" so the file keeps LF on every platform; the same translation that
+    # shipped a CRLF checksum file would rewrite every line of the website.
+    SITE.write_text(updated, newline="")
     print("docs/index.html: font regenerated")
     return 0
 

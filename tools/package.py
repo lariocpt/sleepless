@@ -365,7 +365,17 @@ def main() -> int:
     # Written with the bare file name and no directory component, because that is
     # what `sha256sum -c` reads out of it -- a path in here makes the file useless
     # anywhere but the directory it was generated in.
-    (out / (stem + ext + ".sha256")).write_text(f"{digest}  {archive.name}\n")
+    #
+    # And written as BYTES, so the line ending is LF on every platform. `write_text`
+    # translates \n to \r\n on Windows, which shipped a checksum file that busybox's
+    # sha256sum and Git Bash's both refuse ("can't open '<name>'\r"), while GNU
+    # coreutils quietly tolerates it -- so it passed every check that ran on Linux and
+    # failed for exactly the people most likely to verify a Windows download.
+    sums = out / (stem + ext + ".sha256")
+    sums.write_bytes(f"{digest}  {archive.name}\n".encode())
+    body = sums.read_bytes()
+    if b"\r" in body or not body.endswith(b"\n"):
+        die(f"{sums.name} is not LF-terminated: {body!r}")
     print(f"{digest}  {archive.name}")
     shown = archive.relative_to(ROOT) if archive.is_relative_to(ROOT) else archive
     print(f"package.py: {shown} ({archive.stat().st_size} bytes)")
