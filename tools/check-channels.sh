@@ -65,23 +65,43 @@ skip() {  # <channel> <why>
     printf '  --      %-16s %s\n' "$1" "$2"
 }
 
+# Ask a few times before believing a "no".
+#
+# raw.githubusercontent.com and the crates.io index both lag their source by up to a
+# minute, so running this straight after a channel bump -- which is exactly when you
+# would run it -- reported the tap as having no formula at all while the GitHub API
+# was already serving 0.1.3. A check that goes red for reasons unrelated to the thing
+# it checks is the failure this file exists to prevent, so it is not allowed to be one.
+settled() {  # <command...> -- echoes the first non-empty answer
+    local out i
+    for i in 1 2 3 4 5 6; do
+        out=$("$@" 2>/dev/null || true)
+        [ -n "$out" ] && { printf '%s' "$out"; return; }
+        [ "$i" -lt 6 ] && sleep 5
+    done
+}
+
 # --- GitHub Releases --------------------------------------------------------
 tag=$(curl -fsS -o /dev/null -w '%{url_effective}' -L "https://github.com/$REPO/releases/latest" || true)
 report "github" "${tag##*/v}"
 
 # --- crates.io --------------------------------------------------------------
 if advertised 'cargo install sleepless'; then
-    v=$(curl -fsS -H "$UA" "https://crates.io/api/v1/crates/sleepless" 2>/dev/null \
-        | sed -n 's/.*"max_stable_version":"\([^"]*\)".*/\1/p' || true)
-    report "crates.io" "$v"
+    crates_version() {
+        curl -fsS -H "$UA" "https://crates.io/api/v1/crates/sleepless" \
+            | sed -n 's/.*"max_stable_version":"\([^"]*\)".*/\1/p'
+    }
+    report "crates.io" "$(settled crates_version)"
 else
     skip "crates.io" "not advertised in the README's Install block"
 fi
 
 # --- Homebrew tap -----------------------------------------------------------
 if advertised 'brew install lariocpt/sleepless'; then
-    v=$(curl -fsS "$TAP_RAW" 2>/dev/null | sed -n 's/^[[:space:]]*version[[:space:]]*"\([^"]*\)".*/\1/p' | head -1 || true)
-    report "homebrew" "$v" "the tap has no formula (is the repo public?)"
+    tap_version() {
+        curl -fsS "$TAP_RAW" | sed -n 's/^[[:space:]]*version[[:space:]]*"\([^"]*\)".*/\1/p' | head -1
+    }
+    report "homebrew" "$(settled tap_version)" "the tap has no formula (is the repo public?)"
 else
     skip "homebrew" "not advertised in the README's Install block"
 fi
@@ -90,9 +110,11 @@ fi
 # The RPC returns resultcount 0 for a package that was never pushed, which is
 # indistinguishable from a typo until you look -- so say which it is.
 if advertised "$AUR_PKG"; then
-    body=$(curl -fsS -H "$UA" "https://aur.archlinux.org/rpc/v5/info?arg\[\]=$AUR_PKG" 2>/dev/null || true)
-    v=$(printf '%s' "$body" | sed -n 's/.*"Version":"\([^"-]*\).*/\1/p' | head -1)
-    report "aur" "$v" "$AUR_PKG is not on the AUR (committed but never pushed?)"
+    aur_version() {
+        curl -fsS -H "$UA" "https://aur.archlinux.org/rpc/v5/info?arg\[\]=$AUR_PKG" \
+            | sed -n 's/.*"Version":"\([^"-]*\).*/\1/p' | head -1
+    }
+    report "aur" "$(settled aur_version)" "$AUR_PKG is not on the AUR (committed but never pushed?)"
 else
     skip "aur" "not advertised (AUR registrations are closed; the package is ready)"
 fi
