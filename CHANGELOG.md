@@ -11,6 +11,52 @@ section here. The `version` in `Cargo.toml` must match the tag being released.
 
 ## [Unreleased]
 
+## [0.1.3] - 2026-09-01
+
+The checksum file shipped for the two Windows targets could not be read by two of the
+three `sha256sum` implementations people would use on it.
+
+### Fixed
+
+- **The Windows `.sha256` files had CRLF line endings.** On Windows, Python's
+  `write_text` translates `\n` to `\r\n`, so 0.1.2's
+  `sleepless-*-pc-windows-msvc-*.zip.sha256` carried a trailing carriage return.
+  Measured rather than assumed:
+
+  | implementation | result |
+  | --- | --- |
+  | GNU coreutils 9.7 / 9.11 | `OK` — tolerates the stray `\r` |
+  | busybox (Alpine 3) | **FAILED** — `can't open '<name>'` |
+  | Git Bash, windows-11-arm | **FAILED** — `can't open '<name>'$'\r'` |
+
+  So it passed every check that had ever run on Linux and failed for exactly the
+  people most likely to verify a Windows download — and it failed *looking like
+  tampering*, on the one file whose whole job is to say the download was not tampered
+  with. The archives themselves were never affected. The file is written as bytes now
+  and read back to assert LF, so the guarantee does not depend on which platform did
+  the packaging. `tools/gen-site-font.py` gets the same treatment, since that
+  translation would rewrite every line of the website.
+
+### Changed
+
+- **The packaging guard runs on every runner, not just Linux.** `The archive
+  reproduces` was gated on `runner.os == 'Linux'`, so the two things that can only
+  fail on Windows — the `/Brepro` build-clock guard and zip determinism — were
+  exercised nowhere until a tag existed. That is why the guard itself took two
+  rehearsal tags to get right, and why the CRLF bug reached a release: the first run
+  of this check on Windows is what found it. The step is honest about its scope in
+  its own comment: cargo caches the release build between the two calls, so it proves
+  the *archiving* is deterministic, while the release workflow's rebuild on a second
+  machine is what proves the *compilation* is.
+- `ci.yml` gained `workflow_dispatch`, so the gate can be re-run without inventing a
+  commit.
+- The AUR package is no longer advertised in the README or on the website. It is
+  written and ready in `aur-sleepless-bin` — checksums pinned, `!strip` set so it
+  serves the released bytes — but AUR registrations are closed, and a documented way
+  in that nobody can walk is the failure this project keeps removing. The checks read
+  the README's Install block to decide what to require, so restoring that one line is
+  what re-arms them.
+
 ## [0.1.2] - 2026-08-31
 
 A documentation release. 0.1.1's artifacts are sound -- checksums, attestations and
@@ -189,7 +235,8 @@ to clean up.
   exits, with no TTY.
 - Prebuilt binaries for eight targets, a Homebrew tap, an AUR package, and a website.
 
-[Unreleased]: https://github.com/lariocpt/sleepless/compare/v0.1.2...HEAD
+[Unreleased]: https://github.com/lariocpt/sleepless/compare/v0.1.3...HEAD
+[0.1.3]: https://github.com/lariocpt/sleepless/releases/tag/v0.1.3
 [0.1.2]: https://github.com/lariocpt/sleepless/releases/tag/v0.1.2
 [0.1.1]: https://github.com/lariocpt/sleepless/releases/tag/v0.1.1
 [0.1.0]: https://github.com/lariocpt/sleepless/releases/tag/v0.1.0

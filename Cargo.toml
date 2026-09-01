@@ -1,6 +1,6 @@
 [package]
 name = "sleepless"
-version = "0.1.2"
+version = "0.1.3"
 edition = "2024"
 # 1.89 comes from starship-battery (macOS/Windows only); ratatui needs 1.88 and
 # is the Linux ceiling. Declared as one number because Cargo has no per-target MSRV.
