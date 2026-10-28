@@ -530,6 +530,15 @@ footer a:hover { color: var(--awake); }
 
     <div class="grid2" style="margin-top:8px; gap:24px 36px;">
       <div class="stack-s">
+        <span class="k feat" style="color:var(--muted); font-family:var(--mono); font-size:.68rem; font-weight:700; letter-spacing:.12em; text-transform:uppercase;">Prebuilt, no toolchain</span>
+        <div class="cmd"><span class="sigil">$</span>curl -fsSL https://lariocpt.github.io/sleepless/install.sh | sh</div>
+        <p class="footnote">
+          Detects OS and architecture, verifies the release&rsquo;s own <code>.sha256</code>
+          before anything runs, and installs to <code>~/.local/bin</code>. The script itself
+          is the whole installer &mdash; <code>view-source</code> is the documentation.
+        </p>
+      </div>
+      <div class="stack-s">
         <span class="k feat" style="color:var(--muted); font-family:var(--mono); font-size:.68rem; font-weight:700; letter-spacing:.12em; text-transform:uppercase;">From crates.io</span>
         <div class="cmd"><span class="sigil">$</span>cargo install sleepless</div>
         <p class="footnote">

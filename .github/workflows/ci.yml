@@ -43,7 +43,9 @@ jobs:
           set -euo pipefail
           # test/smoke.sh says #!/bin/sh, so it has to mean it: bash-in-disguise is
           # how a script that works on a developer's box dies on a minimal host.
-          for f in test/*.sh; do
+          # docs/install.sh is held to the same standard because it is piped to
+          # strangers' /bin/sh by curl, with no developer's box in the loop.
+          for f in test/*.sh docs/install.sh; do
             sh -n "$f"
             dash -n "$f"
             shellcheck -s sh "$f"
