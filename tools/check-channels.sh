@@ -20,6 +20,7 @@ set -euo pipefail
 
 REPO=${GH_REPO:-lariocpt/sleepless}
 TAP_RAW=${TAP_RAW:-https://raw.githubusercontent.com/lariocpt/homebrew-sleepless/main/Formula/sleepless.rb}
+INSTALLER_URL=${INSTALLER_URL:-https://lariocpt.github.io/sleepless/install.sh}
 AUR_PKG=${AUR_PKG:-sleepless-bin}
 PLANE=${PLANE:-https://apps.in.drlario.org}
 UA='User-Agent: sleepless-check-channels'
@@ -84,6 +85,30 @@ settled() {  # <command...> -- echoes the first non-empty answer
 # --- GitHub Releases --------------------------------------------------------
 tag=$(curl -fsS -o /dev/null -w '%{url_effective}' -L "https://github.com/$REPO/releases/latest" || true)
 report "github" "${tag##*/v}"
+
+# --- Public installer -------------------------------------------------------
+# Not a version check — the script always resolves to whatever `latest` is. This
+# asks the question README prose cannot answer: is the advertised one-liner a
+# route a stranger can actually walk RIGHT NOW? So the published script is run
+# the way a stranger runs it, through its own --print-url, which resolves the
+# release and fetches nothing. A 404 where the README offered a command once
+# shipped for a whole release; this line is that bug's funeral.
+if advertised 'lariocpt.github.io/sleepless/install.sh'; then
+    installer_version() {
+        local t out
+        t=$(mktemp)
+        if curl -fsS -m 15 -H "$UA" "$INSTALLER_URL" -o "$t" 2>/dev/null; then
+            out=$(sh "$t" --print-url </dev/null 2>/dev/null \
+                | sed -n 's#.*/download/\(v[^/]*\)/.*#\1#p' | sed 's/^v//' | head -1)
+            printf '%s' "$out"
+        fi
+        rm -f "$t"
+    }
+    report "installer" "$(settled installer_version)" \
+        "$INSTALLER_URL is not serving a working installer"
+else
+    skip "installer" "not advertised in the README's Install block"
+fi
 
 # --- crates.io --------------------------------------------------------------
 if advertised 'cargo install sleepless'; then

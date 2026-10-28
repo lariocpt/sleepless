@@ -11,6 +11,16 @@ section here. The `version` in `Cargo.toml` must match the tag being released.
 
 ## [Unreleased]
 
+### Added
+
+- **A one-line install.** `curl -fsSL https://lariocpt.github.io/sleepless/install.sh | sh`
+  now resolves this machine's release build, verifies the archive against its published
+  `.sha256` before anything runs, and installs to `~/.local/bin`. POSIX sh throughout;
+  `--tag=`, `--prefix=`, `--target=`, `--dry-run`, and a `--source=apps` route through
+  the LAN mirror's index. The Pages deploy refuses to serve an `install.sh` that cannot
+  resolve a real release, and `tools/check-channels.sh` runs the published script the
+  way a stranger does, so the advertised route and the route that exists cannot drift.
+
 ## [0.1.3] - 2026-09-01
 
 The checksum file shipped for the two Windows targets could not be read by two of the

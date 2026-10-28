@@ -49,6 +49,16 @@ jobs:
           # And every flag, key, config option and install command the page names has
           # to be one the program actually has.
           cargo test --locked --test docs
+          # The README's one-liner points AT docs/install.sh, so this surface must
+          # serve a working installer, not merely a file: lint it the way a
+          # stranger's /bin/sh will take it, then let it resolve a real published
+          # release. --dry-run writes nothing and fetches nothing — it proves the
+          # route is walkable without proving the download, which is what the
+          # scheduled tools/check-channels.sh is for, live and retried.
+          sh -n docs/install.sh
+          dash -n docs/install.sh
+          docker run --rm -v "$GITHUB_WORKSPACE/docs/install.sh":/s:ro koalaman/shellcheck:stable -s sh /s
+          sh docs/install.sh --dry-run
 
       # No build step on purpose: docs/ is served byte-for-byte as committed.
       - uses: actions/configure-pages@v5

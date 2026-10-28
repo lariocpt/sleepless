@@ -83,10 +83,15 @@ systemd-inhibit --list | grep sleepless
 ## Install
 
 ```sh
+curl -fsSL https://lariocpt.github.io/sleepless/install.sh | sh   # prebuilt, no toolchain
 cargo install sleepless                      # crates.io
 brew install lariocpt/sleepless/sleepless    # macOS / Linuxbrew
 cargo install --path .                       # from a clone
 ```
+
+The one-liner picks the build for your OS and architecture, verifies the release's
+own `.sha256` before anything runs, and installs to `~/.local/bin` — `--tag=` to pin,
+`--prefix=` to redirect, `--dry-run` to rehearse, `--help` for the rest.
 
 An Arch package (`sleepless-bin`, the prebuilt musl binary with its checksum pinned)
 is written and ready in `aur-sleepless-bin`, but the AUR is not currently accepting new

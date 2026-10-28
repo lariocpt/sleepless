@@ -484,6 +484,7 @@ fn the_install_methods_are_the_same_on_both_pages() {
     let site_offers: String = site_command_lines().join("\n");
 
     for method in [
+        "curl -fsSL https://lariocpt.github.io/sleepless/install.sh | sh",
         "cargo install sleepless",
         "brew install lariocpt/sleepless/sleepless",
         "cargo install --path .",
