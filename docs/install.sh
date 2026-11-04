@@ -26,7 +26,7 @@
 #   vX.Y.Z, --tag=vX.Y.Z        install one release, not the latest    [SLEEPLESS_VERSION]
 #   --prefix=DIR, --prefix DIR  where the binary goes (default ~/.local/bin) [SLEEPLESS_PREFIX]
 #   --target=TRIPLE             override build detection, e.g. x86_64-unknown-linux-gnu [SLEEPLESS_TARGET]
-#   --source=github|apps        where to resolve from (default github) [SLEEPLESS_SOURCE]
+#   --source=github             where to resolve from (the default)  [SLEEPLESS_SOURCE]
 #   --download-only=PATH        fetch, verify and extract to PATH; install nothing
 #   --print-url                 resolve and print the download URL; fetch nothing
 #   -n, --dry-run               resolve and report what would be installed; write nothing
@@ -34,7 +34,7 @@
 #
 # Also honoured: SLEEPLESS_REPO (owner/name), SLEEPLESS_DOWNLOAD_BASE (a URL or
 # file:// dir holding the archives and their .sha256 sidecars — a mirror, or a
-# rehearsal), APPS_URL (root of the LAN mirror, for --source=apps).
+# rehearsal).
 set -eu
 
 SL_REPO_DEFAULT='lariocpt/sleepless'
@@ -57,13 +57,13 @@ Options:
   vX.Y.Z, --tag=vX.Y.Z        install one release, not the latest    [SLEEPLESS_VERSION]
   --prefix=DIR, --prefix DIR  where the binary goes, default ~/.local/bin  [SLEEPLESS_PREFIX]
   --target=TRIPLE             override build detection              [SLEEPLESS_TARGET]
-  --source=github|apps        where to resolve from, default github [SLEEPLESS_SOURCE]
+  --source=github             where to resolve from, the default    [SLEEPLESS_SOURCE]
   --download-only=PATH        fetch, verify and extract to PATH; install nothing
   --print-url                 resolve and print the download URL; fetch nothing
   -n, --dry-run               resolve and report; write nothing
   -h, --help                  this text
 
-Also honoured: SLEEPLESS_REPO, SLEEPLESS_DOWNLOAD_BASE, APPS_URL.
+Also honoured: SLEEPLESS_REPO, SLEEPLESS_DOWNLOAD_BASE.
 The download is verified against the release's .sha256 before anything runs.
 EOF
 }
@@ -174,34 +174,10 @@ sl_resolve_github() {                         # -> SL_URL, SL_SUMS_URL
     SL_SUMS_URL="$SL_URL.sha256"
 }
 
-# The LAN mirror is resolved through its index rather than a guessed path: the row
-# whose path goes via latest/ is the only one a client is meant to read, and it
-# carries the sha256 inline, so this plane needs no separate checksum file. What
-# it mirrors is the single x86_64 musl binary — byte-identical to that release
-# build, which is the whole point of a mirror that never rebuilds — so anyone on
-# another architecture must not be silently handed the wrong bytes.
-sl_resolve_apps() {                           # -> SL_URL, SL_WANT, SL_VERSION, sl_flat
-    apps="${APPS_URL:-https://apps.in.drlario.org}"
-    sl_fetch "$apps/index.tsv" "$SL_TMP/index.tsv" || sl_die "cannot reach the LAN mirror at $apps"
-    row=$(awk -F'\t' -v v="$SL_VERSION" '
-        $1=="tool" && $2=="sleepless" && index($7,"/latest/")>0 &&
-        (v=="latest" || $3==v) { print $5 "|" $7 "|" $3; exit }' "$SL_TMP/index.tsv")
-    [ -n "$row" ] || sl_die "no sleepless $SL_VERSION on the LAN mirror at $apps"
-    case "$SL_TARGET" in
-        x86_64-unknown-linux-musl) ;;
-        *) sl_die "the LAN mirror carries only the x86_64 musl build — drop --source=apps for $SL_TARGET" ;;
-    esac
-    SL_WANT=${row%%|*}
-    rest=${row#*|}
-    SL_URL="$apps/${rest%%|*}"
-    SL_VERSION=${rest##*|}                    # 'latest' becomes the concrete version
-    SL_SUMS_URL=
-    sl_flat=1                                 # the mirrored file IS the binary
-}
-
-# The only exit from a mismatch is a refusal. What SL_WANT is a hash OF differs by
-# source — the archive on github, the mirrored binary on apps — so the caller
-# hands over the file the claim describes.
+# The only exit from a mismatch is a refusal. SL_WANT is a hash OF the release
+# archive, never of the binary inside it, so the caller hands over the file the
+# claim describes — checking the unpacked binary would bless a tampered archive
+# whose payload happens to match.
 sl_verify() {                                 # <file whose hash SL_WANT is>
     got=$(sl_sha256 "$1") \
         || sl_die 'no sha256sum, shasum or openssl here — refusing to install an unverified binary'
@@ -228,7 +204,7 @@ main() {
     sl_prefix=${SLEEPLESS_PREFIX:-}
     sl_source=${SLEEPLESS_SOURCE:-github}
     SL_TARGET=${SLEEPLESS_TARGET:-}
-    sl_dlonly=''; sl_printurl=''; sl_dry=''; sl_flat=''
+    sl_dlonly=''; sl_printurl=''; sl_dry=''
 
     # The version list is ours alone — sleepless has no installer to pass flags on
     # to — so an unrecognised argument is an error, not a silent passthrough.
@@ -283,8 +259,7 @@ main() {
     SL_WANT=''
     case "$sl_source" in
         github) sl_resolve_github ;;
-        apps)   sl_resolve_apps ;;
-        *)      sl_die "unknown --source '$sl_source' (want: github, apps)" ;;
+        *)      sl_die "unknown --source '$sl_source' (want: github)" ;;
     esac
     if [ -n "$sl_printurl" ]; then printf '%s\n' "$SL_URL"; exit 0; fi
 
@@ -295,24 +270,17 @@ main() {
         exit 0
     fi
 
-    # With --download-only there is no release-wide truth to fetch, but the
-    # sidecar is cheap and it is what tells us the file is complete.
-    [ -n "$SL_SUMS_URL" ] && sl_want_from_sums
+    # The sidecar is what tells us the download is complete, and it is cheap.
+    sl_want_from_sums
 
     sl_say "downloading $SL_URL"
-    if [ -n "$sl_flat" ]; then
-        # apps mode mirrors the bare binary; the index row's hash is about that file.
-        sl_fetch "$SL_URL" "$SL_TMP/sleepless" || sl_die "download failed: $SL_URL"
-        sl_verify "$SL_TMP/sleepless"
-    else
-        sl_fetch "$SL_URL" "$SL_TMP/$SL_ARCHIVE" || sl_die "download failed: $SL_URL"
-        # The sidecar's claim is about the ARCHIVE, so it is verified before the
-        # unpack: a bad archive never gets the chance to produce a binary at all.
-        sl_verify "$SL_TMP/$SL_ARCHIVE"
-        sl_have tar || sl_die 'need tar to unpack the release archive'
-        tar xzf "$SL_TMP/$SL_ARCHIVE" -C "$SL_TMP" sleepless \
-            || sl_die "could not unpack $SL_ARCHIVE"
-    fi
+    sl_fetch "$SL_URL" "$SL_TMP/$SL_ARCHIVE" || sl_die "download failed: $SL_URL"
+    # The sidecar's claim is about the ARCHIVE, so it is verified before the
+    # unpack: a bad archive never gets the chance to produce a binary at all.
+    sl_verify "$SL_TMP/$SL_ARCHIVE"
+    sl_have tar || sl_die 'need tar to unpack the release archive'
+    tar xzf "$SL_TMP/$SL_ARCHIVE" -C "$SL_TMP" sleepless \
+        || sl_die "could not unpack $SL_ARCHIVE"
     chmod 0755 "$SL_TMP/sleepless"             # release assets arrive without the bit
     sl_say "verified $("$SL_TMP/sleepless" --version 2>/dev/null || echo 'unknown version')"
 
