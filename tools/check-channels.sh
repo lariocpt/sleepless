@@ -15,14 +15,20 @@
 #     tools/check-channels.sh 0.1.2      # against a specific version
 #
 # Exits non-zero if a channel is missing or behind. The LAN plane is off-estate for
-# most runs, so it announces a skip when unreachable rather than failing.
+# most runs and its host is private, so it is checked only when PLANE names it; the
+# run announces a skip rather than failing when it is unset or unreachable.
+#
+#     PLANE=https://mirror.on.my.network tools/check-channels.sh
 set -euo pipefail
 
 REPO=${GH_REPO:-lariocpt/sleepless}
 TAP_RAW=${TAP_RAW:-https://raw.githubusercontent.com/lariocpt/homebrew-sleepless/main/Formula/sleepless.rb}
 INSTALLER_URL=${INSTALLER_URL:-https://lariocpt.github.io/sleepless/install.sh}
 AUR_PKG=${AUR_PKG:-sleepless-bin}
-PLANE=${PLANE:-https://apps.in.drlario.org}
+# The LAN plane is private infrastructure, so its address is not spelled out in a
+# public repository — not even as a default. Set PLANE to check that channel; unset,
+# it reports a skip, which is the same line an unreachable plane already prints.
+PLANE=${PLANE:-}
 UA='User-Agent: sleepless-check-channels'
 
 want=${1:-}
@@ -145,7 +151,9 @@ else
 fi
 
 # --- LAN apps plane ---------------------------------------------------------
-if curl -fsS -m 8 -o /dev/null "$PLANE/index.tsv" 2>/dev/null; then
+if [ -z "$PLANE" ]; then
+    printf '  SKIP    %-16s %s\n' "lan plane" "PLANE is not set (private host, no default here)"
+elif curl -fsS -m 8 -o /dev/null "$PLANE/index.tsv" 2>/dev/null; then
     v=$(curl -fsS -m 15 "$PLANE/index.tsv" \
         | awk -F'\t' '$1=="tool" && $2=="sleepless" && index($7,"/latest/")>0 {print $3; exit}')
     report "lan plane" "$v" "no sleepless row on the plane"
