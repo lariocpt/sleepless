@@ -11,6 +11,12 @@ section here. The `version` in `Cargo.toml` must match the tag being released.
 
 ## [Unreleased]
 
+The landing page now meets the contrast and keyboard rules it had been written against:
+the dimmest status colours were unreadable on the panel they sit on, and the command
+blocks that scroll sideways on a phone could not be scrolled by keyboard. The page is
+published by the Pages workflow rather than shipped in the release archive, so this
+changes no binary and bumps no version.
+
 ## [0.1.4] - 2026-11-04
 
 The one-line install route went public, and putting it in front of strangers turned up

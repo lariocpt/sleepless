@@ -94,14 +94,29 @@ fn site_command_lines() -> Vec<String> {
     }
     // The install panels are `<div class="cmd">$cargo install ...</div>`: not <code>,
     // and not a line beginning with `sleepless`, so neither rule above sees them.
+    // The tag is matched as a prefix, not as `<div class="cmd">`: the panels carry
+    // `tabindex="0"` so a keyboard user can scroll a command that overflows a phone
+    // screen, and a matcher that insisted the tag close right after the class went
+    // blind to every panel at once -- which then surfaced as the site having
+    // "stopped offering" `curl | sh`, three screens away from what had changed.
     let mut rest = html.as_str();
-    while let Some(i) = rest.find(r#"<div class="cmd">"#) {
+    let mut panels_seen = 0usize;
+    while let Some(i) = rest.find(r#"<div class="cmd""#) {
         rest = &rest[i..];
         let Some(j) = rest.find("</div>") else { break };
         let cmd = strip_tags(&rest[..j]);
         out.push(cmd.trim().trim_start_matches('$').trim().to_string());
+        panels_seen += 1;
         rest = &rest[j..];
     }
+    // Read every panel or say so. A partial read makes the comparison below report a
+    // method missing from the site when the site shows it plainly, so the failure
+    // would point at the prose rather than at the parser.
+    let panels_on_page = html.matches(r#"<div class="cmd""#).count();
+    assert_eq!(
+        panels_seen, panels_on_page,
+        "the extractor read {panels_seen} of the site's {panels_on_page} install panels"
+    );
     for line in html.lines() {
         let t = strip_tags(line);
         let t = t.trim();
