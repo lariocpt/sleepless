@@ -11,15 +11,10 @@ section here. The `version` in `Cargo.toml` must match the tag being released.
 
 ## [Unreleased]
 
-### Changed
+## [0.1.4] - 2026-11-04
 
-- **The installer dropped its LAN-mirror source.** `--source=apps` and the `APPS_URL`
-  default named private infrastructure a stranger cannot reach, and this repository is
-  public, so the route and its default are gone rather than merely blanked. `--source`
-  now accepts only `github`, which was already the default — every public call that
-  worked before behaves identically, and `--source=apps` says so plainly. The same
-  host went out of `tools/check-channels.sh`, where it becomes a channel that is
-  checked when `PLANE` names it and skipped when it does not.
+The one-line install route went public, and putting it in front of strangers turned up
+that it named machines those strangers cannot reach.
 
 ### Added
 
@@ -30,6 +25,18 @@ section here. The `version` in `Cargo.toml` must match the tag being released.
   an `install.sh` that cannot resolve a real release, and `tools/check-channels.sh` runs
   the published script the way a stranger does, so the advertised route and the route
   that exists cannot drift.
+
+### Changed
+
+- **The installer dropped its LAN-mirror source.** `--source=apps` and the `APPS_URL`
+  default named private infrastructure a stranger cannot reach, and this repository is
+  public, so the route and its default are gone rather than merely blanked. `--source`
+  now accepts only `github`, which was already the default — every public call that
+  worked before behaves identically, and `--source=apps` says so plainly. The same
+  host went out of `tools/check-channels.sh`, where it becomes a channel that is
+  checked when `PLANE` names it and skipped when it does not. Nothing released ever
+  carried that route: `v0.1.3` shipped no `install.sh` at all, which is why this is a
+  patch rather than a breaking release.
 
 ## [0.1.3] - 2026-09-01
 
