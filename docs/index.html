@@ -31,10 +31,26 @@ table{border-collapse:collapse}
   --line:     #cfdbd2;
   --text:     #0a0e0b;
   --muted:    #5b6b60;
-  --awake:    #15803d;
-  --pulse:    #22c55e;
-  --paused:   #b45309;
-  --dead:     #8d9a92;
+  --awake:    #166534;
+  /* --pulse is both the splash's "running indefinitely" colour and the page's focus
+     ring, and #22c55e was 2.06:1 on --ground — it failed as text (needs 4.5) and as a
+     focus indicator (needs 3:1, WCAG 1.4.11). #3f6212 clears both at 6.43 and stays a
+     visible step from --awake, so the pulse state still reads as its own state. */
+  --pulse:    #3f6212;
+  /* Was #b45309: 4.29:1 on --panel-2, and the "stale" status word and the danger
+     button's hover colour are both --paused text sitting on that surface. #a14a09 is
+     5.13:1 there, 5.45:1 on --ground, and still 5.45:1 as the chip's background behind
+     --ground text. Dark keeps #f59e0b, which measures 7.72:1 on --panel-2. */
+  --paused:   #a14a09;
+  /* --dead and --awake are floor-limited, not taste-limited. Every pair was measured
+     against the three surfaces each lands on (--ground, --panel, --panel-2), for the
+     small bold text the comparison table and status chips use. #5e6d64 is the lightest
+     --dead can be and still clear 4.5:1 on every one of them: the next step lighter,
+     #617063, measures 4.48:1 on --panel-2. It used to be #8d9a92, which was 2.66:1 on
+     --ground — deliberately dim for a "No", and simply unreadable. --awake was
+     darkened from #15803d, whose 4.29:1 on --panel-2 failed; the darker green also
+     lifts the chip, where it is the background rather than the text. */
+  --dead:     #5e6d64;
   --shadow:   0 1px 2px rgba(10,14,11,.06), 0 8px 24px rgba(10,14,11,.05);
 
   --display: "Archivo", ui-sans-serif, system-ui, sans-serif;
@@ -52,7 +68,7 @@ table{border-collapse:collapse}
     --awake:   #22c55e;
     --pulse:   #4ade80;
     --paused:  #f59e0b;
-    --dead:    #4a5850;
+    --dead:    #85998f;
     --shadow:  0 1px 2px rgba(0,0,0,.4), 0 10px 30px rgba(0,0,0,.35);
   }
 }
@@ -66,7 +82,7 @@ table{border-collapse:collapse}
   --awake:   #22c55e;
   --pulse:   #4ade80;
   --paused:  #f59e0b;
-  --dead:    #4a5850;
+  --dead:    #85998f;
   --shadow:  0 1px 2px rgba(0,0,0,.4), 0 10px 30px rgba(0,0,0,.35);
 }
 
@@ -83,6 +99,23 @@ body {
 }
 
 .wrap { max-width: 1040px; margin: 0 auto; padding: 0 24px; }
+
+/* For labels a screen reader should read and the design should not show: an empty
+   table header is announced as "column 1", which tells you nothing about a column
+   whose cells are the row names. display:none would hide it from both, so it is
+   clipped to a single pixel instead. */
+.vh {
+  position: absolute; width: 1px; height: 1px; margin: -1px;
+  padding: 0; overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%);
+  white-space: nowrap; border: 0;
+}
+
+/* A region that scrolls sideways is only reachable by keyboard if it can take focus:
+   without tabindex a keyboard user on a narrow screen sees the cut-off edge of a
+   table they cannot scroll. These take the same focus ring the buttons already use. */
+.cmd:focus-visible, .tablewrap:focus-visible, .splash:focus-visible, pre.block:focus-visible {
+  outline: 2px solid var(--pulse); outline-offset: 2px;
+}
 .prose { max-width: 68ch; }
 
 h1, h2, h3 { font-family: var(--display); text-wrap: balance; margin: 0; }
@@ -269,21 +302,25 @@ footer a:hover { color: var(--awake); }
 
   <!-- ============ HERO ============ -->
   <header class="hero stack">
-    <pre class="splash" id="splash" aria-label="I can't get no sleep" data-state="on"></pre>
+    <pre class="splash" id="splash" role="img" tabindex="0" aria-label="I can't get no sleep" data-state="on"></pre>
 
     <div class="stack" style="gap:14px; margin-top:8px;">
       <span class="chip" id="chip" data-state="on">&#9679;&nbsp; Awake &mdash; always</span>
-      <p class="lede">Keeps your computer awake for exactly as long as the terminal is open.</p>
+      <h1 class="lede">Keeps your computer awake for exactly as long as the terminal is open.</h1>
       <p class="sub">
         Every lock it takes is bound to the process itself. Close the terminal &mdash; or
         <code>kill -9</code> it, however rudely &mdash; and normal sleep is back instantly.
         There is no daemon, no config to undo, and nothing left behind to clean up.
       </p>
-      <div class="cmd" style="max-width:min(100%,460px); margin-top:4px;">
+      <div class="cmd" tabindex="0" style="max-width:min(100%,460px); margin-top:4px;">
         <span class="sigil">$</span>cargo install sleepless
       </div>
     </div>
   </header>
+
+  <!-- The sections live in a main landmark: without one, screen-reader skip lists and
+       "jump to content" have nothing to offer on a single-page site like this. -->
+  <main>
 
   <!-- ============ PROBLEM ============ -->
   <section class="stack">
@@ -463,11 +500,11 @@ footer a:hover { color: var(--awake); }
       exposed and how hard it has been exercised.
     </p>
 
-    <div class="tablewrap" style="margin-top:8px;">
+    <div class="tablewrap" tabindex="0" style="margin-top:8px;">
       <table>
         <thead>
           <tr>
-            <th scope="col">&nbsp;</th>
+            <th scope="col"><span class="vh">Capability</span></th>
             <th scope="col">Linux</th>
             <th scope="col">macOS</th>
             <th scope="col">Windows</th>
@@ -531,7 +568,7 @@ footer a:hover { color: var(--awake); }
     <div class="grid2" style="margin-top:8px; gap:24px 36px;">
       <div class="stack-s">
         <span class="k feat" style="color:var(--muted); font-family:var(--mono); font-size:.68rem; font-weight:700; letter-spacing:.12em; text-transform:uppercase;">Prebuilt, no toolchain</span>
-        <div class="cmd"><span class="sigil">$</span>curl -fsSL https://lariocpt.github.io/sleepless/install.sh | sh</div>
+        <div class="cmd" tabindex="0"><span class="sigil">$</span>curl -fsSL https://lariocpt.github.io/sleepless/install.sh | sh</div>
         <p class="footnote">
           Detects OS and architecture, verifies the release&rsquo;s own <code>.sha256</code>
           before anything runs, and installs to <code>~/.local/bin</code>. The script itself
@@ -540,7 +577,7 @@ footer a:hover { color: var(--awake); }
       </div>
       <div class="stack-s">
         <span class="k feat" style="color:var(--muted); font-family:var(--mono); font-size:.68rem; font-weight:700; letter-spacing:.12em; text-transform:uppercase;">From crates.io</span>
-        <div class="cmd"><span class="sigil">$</span>cargo install sleepless</div>
+        <div class="cmd" tabindex="0"><span class="sigil">$</span>cargo install sleepless</div>
         <p class="footnote">
           Installs a single binary called <code>sleepless</code>. No runtime, no daemon,
           nothing else to set up.
@@ -548,7 +585,7 @@ footer a:hover { color: var(--awake); }
       </div>
       <div class="stack-s">
         <span class="k feat" style="color:var(--muted); font-family:var(--mono); font-size:.68rem; font-weight:700; letter-spacing:.12em; text-transform:uppercase;">macOS / Linuxbrew</span>
-        <div class="cmd"><span class="sigil">$</span>brew install lariocpt/sleepless/sleepless</div>
+        <div class="cmd" tabindex="0"><span class="sigil">$</span>brew install lariocpt/sleepless/sleepless</div>
         <p class="footnote">
           A prebuilt binary from the tap, so there is nothing to compile. Linuxbrew gets the
           static musl build.
@@ -556,7 +593,7 @@ footer a:hover { color: var(--awake); }
       </div>
       <div class="stack-s">
         <span class="k feat" style="color:var(--muted); font-family:var(--mono); font-size:.68rem; font-weight:700; letter-spacing:.12em; text-transform:uppercase;">From source</span>
-        <div class="cmd"><span class="sigil">$</span>cargo install --path .</div>
+        <div class="cmd" tabindex="0"><span class="sigil">$</span>cargo install --path .</div>
         <p class="footnote">
           Requires Rust 1.89 or newer. The dependency tree is pure Rust &mdash; no C toolchain,
           no <code>pkg-config</code>, no system libraries. Prebuilt binaries for eight targets are
@@ -568,7 +605,7 @@ footer a:hover { color: var(--awake); }
 
     <div class="stack-s" style="margin-top:20px;">
       <span class="eyebrow">Then</span>
-      <pre class="block">sleepless                    <span style="color:var(--muted)"># stay awake while this runs</span>
+      <pre class="block" tabindex="0">sleepless                    <span style="color:var(--muted)"># stay awake while this runs</span>
 sleepless --plugged-only     <span style="color:var(--muted)"># ...but not on battery</span>
 sleepless --always           <span style="color:var(--muted)"># force always mode, ignoring what was saved</span>
 sleepless --inhibit-lid      <span style="color:var(--muted)"># also block lid-close suspend (Linux)</span>
@@ -584,13 +621,16 @@ sleepless --why "rendering"  <span style="color:var(--muted)"># reason shown by 
       </p>
     </div>
   </section>
+  </main>
 
   <footer>
     <p>
       sleepless &mdash; MIT licensed.
       <a href="https://github.com/lariocpt/sleepless">github.com/lariocpt/sleepless</a>
     </p>
-    <p style="margin-top:6px; opacity:.75;">The splash above is rendered with the app's own block font.</p>
+    <!-- No opacity here: this text is already --muted, and fading it to .75 put it at
+         3.1:1, under AA. The colour carries the emphasis; the alpha does not. -->
+    <p style="margin-top:6px;">The splash above is rendered with the app's own block font.</p>
   </footer>
 
 </div>
