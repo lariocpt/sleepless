@@ -24,6 +24,19 @@ ROOT=$(cd "$(dirname "$0")/.." && pwd)
 TAP=${TAP_DIR:-$ROOT/../homebrew-sleepless}
 AUR=${AUR_DIR:-$ROOT/../aur-sleepless-bin}
 
+# A channel that is not here cannot be a gate on the channels that are.
+#
+# The AUR package was written but never registered: aur.archlinux.org has no
+# sleepless-bin and there is no aur-sleepless-bin repository, so no checkout of it
+# exists anywhere. Requiring one made this tool refuse to move the Homebrew formula —
+# the one packaging channel that is actually advertised — and that is the same mistake
+# check-channels.sh already corrected for the LAN plane, whose address it stopped
+# insisting on. A missing checkout is therefore a skipped channel, not a failure.
+#
+# Naming AUR_DIR is different. Setting it is an assertion that the channel exists, so
+# when it does not, that is a real mistake and stays a hard failure.
+AUR_WAS_SET=${AUR_DIR:-}
+
 fail() { echo "FAIL: $*" >&2; exit 1; }
 
 want=$(sed -n 's/^version[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' "$ROOT/Cargo.toml" | head -1)
@@ -75,13 +88,21 @@ PY
 
 # ------------------------------------------------------------------------- AUR
 pkgbuild="$AUR/PKGBUILD"
-[ -f "$pkgbuild" ] || fail "no PKGBUILD at $pkgbuild (set AUR_DIR)"
+have_aur=1
+if [ ! -f "$pkgbuild" ]; then
+  [ -n "$AUR_WAS_SET" ] && fail "no PKGBUILD at $pkgbuild (set AUR_DIR)"
+  have_aur=0
+  echo "  SKIP: no AUR checkout at $AUR — the package is not registered, so this" >&2
+  echo "        channel is not moved. Set AUR_DIR once it exists to move it here." >&2
+fi
 new_pkgbuild=$(mktemp)
-sed -e "s/^pkgver=.*/pkgver=$VERSION/" \
-    -e "s/^pkgrel=.*/pkgrel=1/" \
-    -e "s/^sha256sums_x86_64=('.*')/sha256sums_x86_64=('${SUM[x86_64-unknown-linux-musl]}')/" \
-    -e "s/^sha256sums_aarch64=('.*')/sha256sums_aarch64=('${SUM[aarch64-unknown-linux-musl]}')/" \
-    "$pkgbuild" > "$new_pkgbuild"
+if [ "$have_aur" = 1 ]; then
+  sed -e "s/^pkgver=.*/pkgver=$VERSION/" \
+      -e "s/^pkgrel=.*/pkgrel=1/" \
+      -e "s/^sha256sums_x86_64=('.*')/sha256sums_x86_64=('${SUM[x86_64-unknown-linux-musl]}')/" \
+      -e "s/^sha256sums_aarch64=('.*')/sha256sums_aarch64=('${SUM[aarch64-unknown-linux-musl]}')/" \
+      "$pkgbuild" > "$new_pkgbuild"
+fi
 
 # --------------------------------------------------------------------- apply
 diffs=0
@@ -101,11 +122,11 @@ apply() {  # <new> <dest>
 }
 echo "sleepless $VERSION -> packaging channels"
 apply "$new_formula" "$formula"
-apply "$new_pkgbuild" "$pkgbuild"
+[ "$have_aur" = 1 ] && apply "$new_pkgbuild" "$pkgbuild"
 
 # .SRCINFO is generated, never edited: hand-editing it is how it drifts from the
 # PKGBUILD it is supposed to describe.
-if [ "$MODE" != "--check" ]; then
+if [ "$have_aur" = 1 ] && [ "$MODE" != "--check" ]; then
   if command -v makepkg >/dev/null 2>&1; then
     ( cd "$AUR" && makepkg --printsrcinfo > .SRCINFO )
     echo "  regenerated: $AUR/.SRCINFO"
@@ -120,14 +141,21 @@ for t in "${targets[@]}"; do
   grep -q "${SUM[$t]}" "$formula" || fail "the formula does not pin $t (${SUM[$t]})"
 done
 for t in x86_64-unknown-linux-musl aarch64-unknown-linux-musl; do
-  grep -q "${SUM[$t]}" "$pkgbuild" || fail "the PKGBUILD does not pin $t"
-  if [ -f "$AUR/.SRCINFO" ] && [ "$MODE" != "--check" ]; then
-    grep -q "${SUM[$t]}" "$AUR/.SRCINFO" || fail ".SRCINFO does not pin $t"
+  if [ "$have_aur" = 1 ]; then
+    grep -q "${SUM[$t]}" "$pkgbuild" || fail "the PKGBUILD does not pin $t"
+    if [ -f "$AUR/.SRCINFO" ] && [ "$MODE" != "--check" ]; then
+      grep -q "${SUM[$t]}" "$AUR/.SRCINFO" || fail ".SRCINFO does not pin $t"
+    fi
   fi
 done
 grep -q "\"$VERSION\"" "$formula" || fail "the formula is not on $VERSION"
-grep -q "^pkgver=$VERSION\$" "$pkgbuild" || fail "the PKGBUILD is not on $VERSION"
-echo "ok: formula, PKGBUILD and .SRCINFO all serve $VERSION and the released checksums"
+if [ "$have_aur" = 1 ]; then
+  grep -q "^pkgver=$VERSION\$" "$pkgbuild" || fail "the PKGBUILD is not on $VERSION"
+  echo "ok: formula, PKGBUILD and .SRCINFO all serve $VERSION and the released checksums"
+else
+  echo "ok: the formula serves $VERSION and the released checksums; the AUR channel is"
+  echo "    not registered and was skipped rather than gated on"
+fi
 
 [ "$MODE" = "--check" ] && exit "$diffs"
 exit 0
